@@ -1,0 +1,166 @@
+{
+  "name": "rrma-deepseek-harness",
+  "displayName": "RRMA DeepseekHarness",
+  "description": "An unofficial VS Code client for DeepSeek Harness over ACP.",
+  "version": "0.6.0",
+  "publisher": "rrma",
+  "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jotarozaku-jpg/RRMA-DeepseekHarness.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jotarozaku-jpg/RRMA-DeepseekHarness/issues"
+  },
+  "homepage": "https://github.com/jotarozaku-jpg/RRMA-DeepseekHarness#readme",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    }
+  },
+  "categories": ["Machine Learning", "Other"],
+  "keywords": ["deepseek", "harness", "acp", "coding agent"],
+  "activationEvents": [
+    "onCommand:deepseekHarness.openChat",
+    "onCommand:deepseekHarness.newConversation",
+    "onCommand:deepseekHarness.sendSelection",
+    "onCommand:deepseekHarness.openInstallGuide",
+    "onWebviewPanel:deepseekHarness.chat"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "deepseekHarness.openChat",
+        "title": "RRMA DeepseekHarness: Open Chat",
+        "icon": { "light": "media/icon.svg", "dark": "media/icon.svg" }
+      },
+      {
+        "command": "deepseekHarness.newConversation",
+        "title": "RRMA DeepseekHarness: New Conversation",
+        "icon": "$(add)"
+      },
+      {
+        "command": "deepseekHarness.cancelTurn",
+        "title": "RRMA DeepseekHarness: Cancel Turn",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "deepseekHarness.sendSelection",
+        "title": "RRMA DeepseekHarness: Send Selection",
+        "icon": "$(send)"
+      },
+      {
+        "command": "deepseekHarness.openInstallGuide",
+        "title": "RRMA DeepseekHarness: Open Installation Guide",
+        "icon": "$(book)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        { "command": "deepseekHarness.openChat", "group": "navigation" }
+      ],
+      "editor/context": [
+        {
+          "command": "deepseekHarness.sendSelection",
+          "when": "editorHasSelection",
+          "group": "deepseekHarness@10"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "deepseekHarness.openChat",
+        "key": "ctrl+alt+d",
+        "mac": "cmd+alt+d"
+      },
+      {
+        "command": "deepseekHarness.cancelTurn",
+        "key": "escape",
+        "when": "deepseekHarness.turnInProgress"
+      },
+      {
+        "command": "deepseekHarness.sendSelection",
+        "key": "ctrl+alt+s",
+        "mac": "cmd+alt+s",
+        "when": "editorTextFocus && editorHasSelection"
+      }
+    ],
+    "configuration": {
+      "title": "RRMA DeepseekHarness",
+      "properties": {
+        "deepseekHarness.configRoot": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Machine-local configuration directory. Empty uses ~/.rrma-deepseek-harness."
+        },
+        "deepseekHarness.harnessRoot": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Path to an external DeepSeek Harness checkout prepared by adapter/setup.ps1. Empty uses ~/.deepseek-harness."
+        },
+        "deepseekHarness.workingDirectory": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Agent working directory. Empty uses the first open VS Code workspace folder."
+        },
+        "deepseekHarness.nodePath": {
+          "type": "string",
+          "default": "node",
+          "scope": "machine",
+          "description": "Node.js executable used to launch the ACP adapter."
+        },
+        "deepseekHarness.modelLabel": {
+          "type": "string",
+          "default": "DeepSeek V4 Pro",
+          "description": "Model label displayed in the chat header."
+        },
+        "deepseekHarness.approvalMode": {
+          "type": "string",
+          "enum": ["manual", "sandbox", "full-access"],
+          "enumDescriptions": [
+            "Ask for a one-shot decision before every tool call.",
+            "Run operations inside the workspace sandbox automatically and ask before an elevated retry.",
+            "Disable tool approval and remove sandbox boundaries. Extremely dangerous; only use in a fully trusted workspace."
+          ],
+          "scope": "machine",
+          "default": "manual",
+          "description": "Tool approval mode: manual, workspace sandbox, or unrestricted full access."
+        },
+        "deepseekHarness.autoAllowTools": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["read"] },
+          "uniqueItems": true,
+          "default": [],
+          "scope": "machine",
+          "description": "Low-risk tools that may bypass prompts in manual mode. Only workspace-scoped read is supported; secrets and protected paths remain blocked."
+        },
+        "deepseekHarness.thoughtDisplay": {
+          "type": "string",
+          "enum": ["expanded", "collapsed", "hidden"],
+          "enumDescriptions": [
+            "Show thought content expanded.",
+            "Show thought activity with details collapsed.",
+            "Hide thought entries."
+          ],
+          "default": "collapsed",
+          "description": "How model-provided ACP thought chunks are displayed."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "check": "node --check extension.js && node --check src/acpTransport.js && node --check src/security.js && node --check media/main.js && node --check adapter/acp-bridge.mjs",
+    "smoke:approval": "node tests/smoke-approval-mode.mjs",
+    "smoke:auto-approval": "node tests/smoke-auto-approval.mjs",
+    "smoke:security": "node tests/smoke-security.js",
+    "prepackage": "node scripts/prepare-package.js",
+    "package": "npx --yes @vscode/vsce@latest package --out dist/rrma-deepseek-harness.vsix"
+  }
+}

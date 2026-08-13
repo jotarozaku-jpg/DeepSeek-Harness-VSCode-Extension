@@ -1,0 +1,164 @@
+diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
+--- a/packages/acp/acp/src/index.ts
++++ b/packages/acp/acp/src/index.ts
+@@ -30,6 +30,10 @@ import {
+   type PromptRequest,
+   type PromptResponse,
+   type SessionNotification,
++  type ToolCall,
++  type ToolCallContent,
++  type ToolCallUpdate,
++  type ToolKind,
+   type StopReason,
+   type Stream,
+ } from '@agentclientprotocol/sdk'
+@@ -127,6 +131,80 @@ export function apply(ctx: Context, config: AcpConfig): void {
+     return record
+   }
+ 
++  const parseArgs = (raw: string): unknown => {
++    try { return JSON.parse(raw) } catch { return raw }
++  }
++
++  const toolKind = (name: string): ToolKind => {
++    if (/read|open|image/i.test(name)) return 'read'
++    if (/grep|glob|search|find|list/i.test(name)) return 'search'
++    if (/write|edit|patch/i.test(name)) return 'edit'
++    if (/delete|remove/i.test(name)) return 'delete'
++    if (/move|rename/i.test(name)) return 'move'
++    if (/pwsh|bash|shell|terminal|run|exec/i.test(name)) return 'execute'
++    if (/fetch|web/i.test(name)) return 'fetch'
++    return 'other'
++  }
++
++  const content = (blocks: readonly unknown[] | undefined): ToolCallContent[] => {
++    if (!Array.isArray(blocks)) return []
++    return blocks.flatMap((block: unknown) => {
++      if (typeof block !== 'object' || block === null) return []
++      const item = block as { type?: unknown; text?: unknown }
++      if (item.type === 'text' && typeof item.text === 'string') {
++        return [{ type: 'content' as const, content: { type: 'text' as const, text: item.text } }]
++      }
++      return []
++    })
++  }
++
++  const callView = (name: string, raw: string, callId: string): ToolCall => {
++    const args = parseArgs(raw)
++    const values = typeof args === 'object' && args !== null ? args as Record<string, unknown> : {}
++    const location = typeof values.file_path === 'string' ? values.file_path : typeof values.path === 'string' ? values.path : undefined
++    return {
++      toolCallId: callId,
++      title: typeof values.command === 'string' ? values.command : name,
++      kind: toolKind(name),
++      status: 'in_progress',
++      rawInput: args,
++      ...(location === undefined ? {} : { locations: [{ path: location }] }),
++    }
++  }
++
++  const metaDiffs = (meta: unknown): ToolCallContent[] => {
++    if (typeof meta !== 'object' || meta === null || !('diffs' in meta) || !Array.isArray(meta.diffs)) return []
++    return meta.diffs.flatMap((value: unknown) => {
++      if (typeof value !== 'object' || value === null) return []
++      const diff = value as { path?: unknown; oldText?: unknown; newText?: unknown }
++      if (typeof diff.path !== 'string' || typeof diff.newText !== 'string') return []
++      return [{
++        type: 'diff' as const,
++        path: diff.path,
++        oldText: typeof diff.oldText === 'string' ? diff.oldText : null,
++        newText: diff.newText,
++      }]
++    })
++  }
++
++  const resultUpdate = (event: Extract<SessionEvent, { type: 'tool/result' }>): ToolCallUpdate => {
++    const callId = String(event.data.message.source.callId)
++    const resultBlock = event.data.message.content.find(block => block.type === 'tool-result')
++    const rawContent = resultBlock?.content ?? []
++    const failed = resultBlock?.isError === true || event.data.error !== undefined
++    const diffs = metaDiffs(event.data.meta)
++    return {
++      toolCallId: callId,
++      status: failed ? 'failed' : 'completed',
++      content: diffs.length > 0 ? diffs : content(rawContent),
++      rawOutput: {
++        content: rawContent,
++        ...(event.data.meta === undefined ? {} : { meta: event.data.meta }),
++        ...(event.data.error === undefined ? {} : { error: event.data.error }),
++      },
++    }
++  }
++
+   /** Send a protocol update without letting a disconnected client fail an agent turn. */
+   const notify = (notification: SessionNotification): void => {
+     /* v8 ignore next 3 -- only a transport write failure reaches this guard. */
+@@ -149,9 +227,8 @@ export function apply(ctx: Context, config: AcpConfig): void {
+     inflight.reject(internalError(`turn failed: ${reason.error.message}`))
+   }
+ 
+-  // Emit only committed assistant text. Raw chunks, reasoning, tools, plans,
+-  // titles, and retry markers are presentation or trace data and stay off the
+-  // automation wire.
++  // RRMA rich-client bridge: retain committed assistant text while also exposing
++  // model-provided reasoning and the Harness tool lifecycle over standard ACP updates.
+   ctx.on('session/event', (session, event: SessionEvent) => {
+     const record = sessions.get(session.header.id)
+     if (record === undefined || record.agent.session !== session) return
+@@ -179,6 +256,56 @@ export function apply(ctx: Context, config: AcpConfig): void {
+             })
+           }
+         }
++      } else if (event.type === 'assistant/chunk' && event.data.chunk.type === 'reasoning-delta') {
++        if (event.data.chunk.text.length > 0) {
++          notify({
++            sessionId: record.agent.session.id,
++            update: {
++              sessionUpdate: 'agent_thought_chunk',
++              content: { type: 'text', text: event.data.chunk.text },
++            },
++          })
++        }
++      } else if (event.type === 'assistant/chunk' && event.data.chunk.type === 'usage') {
++        const usage = event.data.chunk.usage
++        const cacheReadTokens = usage.cacheReadTokens ?? 0
++        const cacheWriteTokens = usage.cacheWriteTokens ?? 0
++        const inputTokens = usage.inputTokens + cacheReadTokens + cacheWriteTokens
++        notify({
++          sessionId: record.agent.session.id,
++          update: {
++            sessionUpdate: 'usage_update',
++            used: 0,
++            size: 0,
++            _meta: {
++              rrmaUsage: {
++                inputTokens,
++                uncachedInputTokens: usage.inputTokens,
++                outputTokens: usage.outputTokens,
++                cacheReadTokens,
++                cacheWriteTokens,
++              },
++            },
++          },
++        })
++      } else if (event.type === 'tool/call') {
++        notify({
++          sessionId: record.agent.session.id,
++          update: { sessionUpdate: 'tool_call', ...callView(event.data.name, event.data.arguments, String(event.data.callId)) },
++        })
++      } else if (event.type === 'tool/result') {
++        notify({
++          sessionId: record.agent.session.id,
++          update: { sessionUpdate: 'tool_call_update', ...resultUpdate(event) },
++        })
++      } else if (event.type === 'todo/write') {
++        notify({
++          sessionId: record.agent.session.id,
++          update: {
++            sessionUpdate: 'plan',
++            entries: event.data.todos.map(todo => ({ content: todo.content, status: todo.status, priority: 'medium' })),
++          },
++        })
+       }
+     } finally {
+       const inflight = record.inflight

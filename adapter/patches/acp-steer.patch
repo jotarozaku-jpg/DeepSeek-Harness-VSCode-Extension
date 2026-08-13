@@ -1,0 +1,32 @@
+diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
+--- a/packages/acp/acp/src/index.ts
++++ b/packages/acp/acp/src/index.ts
+@@ -338,6 +338,28 @@ export function apply(ctx: Context, config: AcpConfig): void {
+         return { stopReason }
+       },
+ 
++      async extMethod(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
++        if (method !== 'rrma.dev/session/steer') throw RequestError.methodNotFound(method)
++        assertOpen()
++        const sessionId = params.sessionId
++        const text = params.text
++        if (typeof sessionId !== 'string' || sessionId.length === 0) {
++          throw invalidParams('steer sessionId must be a non-empty string')
++        }
++        if (typeof text !== 'string' || text.trim().length === 0) {
++          throw invalidParams('steer text must be a non-empty string')
++        }
++        const record = requireSession(SessionId(sessionId))
++        if (record.inflight === undefined) {
++          throw invalidParams('no prompt is in flight for this session')
++        }
++        if (ctx.agents.get(record.agent.id) !== record.agent) {
++          throw internalError('steer was not queued: the agent was disposed outside the bridge')
++        }
++        record.agent.steer(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
++        return {}
++      },
++
+       cancel(params: CancelNotification): Promise<void> {
+         const record = sessions.get(SessionId(params.sessionId))
+         if (record === undefined) return Promise.resolve()

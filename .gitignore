@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.vsix
+.credentials.yaml
+.runtime.cordis.yml
+.dsh/
+.deepseek-harness/
+.rrma-deepseek-harness/
+.sessions/
+.env
+.env.*
+!.env.example
