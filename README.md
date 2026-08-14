@@ -6,6 +6,10 @@
 
 > 状态：早期预览。DeepSeek Harness 本身仍处于开发者预览阶段；在上游 ACP 入口趋于稳定之前，本扩展暂时使用固定版本的小型兼容适配层。
 
+## 界面预览 / Interface preview
+
+![RRMA DeepseekHarness 在 Visual Studio Code 中的界面 / RRMA DeepseekHarness in Visual Studio Code](docs/images/rrma-deepseek-harness-vscode.png)
+
 ## 功能
 
 - 在编辑器标签页中提供完整聊天界面
