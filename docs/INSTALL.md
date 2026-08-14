@@ -37,13 +37,25 @@ Create the machine-local credential file:
 创建机器本地凭据文件：
 
 ```powershell
-Copy-Item "$env:USERPROFILE\.rrma-deepseek-harness\.credentials.example.yaml" `
-  "$env:USERPROFILE\.rrma-deepseek-harness\.credentials.yaml"
+$configRoot = if (Test-Path "$env:USERPROFILE\.deepseek-harness-vscode") {
+  "$env:USERPROFILE\.deepseek-harness-vscode"
+} elseif (Test-Path "$env:USERPROFILE\.rrma-deepseek-harness") {
+  "$env:USERPROFILE\.rrma-deepseek-harness"
+} else {
+  throw "Configuration directory not found. Run adapter\setup.ps1 first."
+}
+$credentialExample = Join-Path $configRoot '.credentials.example.yaml'
+$credentialFile = Join-Path $configRoot '.credentials.yaml'
+if (Test-Path -LiteralPath $credentialFile) {
+  Write-Host "Credentials already exist; leaving them unchanged: $credentialFile"
+} else {
+  Copy-Item -LiteralPath $credentialExample -Destination $credentialFile
+}
 ```
 
-Open `.credentials.yaml` locally and replace the placeholder with your own key. Never commit or paste the key into an issue.
+Open `.credentials.yaml` in the selected `$configRoot` locally and replace the placeholder with your own key. Never commit or paste the key into an issue.
 
-请只在本机编辑 `.credentials.yaml` 并替换占位值。不要把 API Key 提交到 Git，也不要粘贴到 Issue。
+请只在本机编辑所选 `$configRoot` 内的 `.credentials.yaml` 并替换占位值。不要把 API Key 提交到 Git，也不要粘贴到 Issue。
 
 Package and install the extension:
 
@@ -68,7 +80,11 @@ If the external runtime or machine-local configuration is missing, the extension
 The defaults are:
 
 - Harness checkout: `%USERPROFILE%\.deepseek-harness`
-- Machine-local configuration: `%USERPROFILE%\.rrma-deepseek-harness`
+- Machine-local configuration: `%USERPROFILE%\.deepseek-harness-vscode`
 - Session history: `%USERPROFILE%\.dsh\.sessions`
 
 Override them with `deepseekHarness.harnessRoot`, `deepseekHarness.configRoot`, or the corresponding setup environment variables when needed.
+
+For compatibility, an existing `%USERPROFILE%\.rrma-deepseek-harness` is still used when the new configuration directory does not exist. New installations use `%USERPROFILE%\.deepseek-harness-vscode`.
+
+为兼容早期安装，当新配置目录不存在时，扩展仍会使用已有的 `%USERPROFILE%\.rrma-deepseek-harness`。全新安装会使用 `%USERPROFILE%\.deepseek-harness-vscode`。

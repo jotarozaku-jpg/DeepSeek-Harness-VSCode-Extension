@@ -4,7 +4,7 @@ const path = require('node:path');
 const { AcpTransport } = require('../src/acpTransport');
 
 const repoRoot = path.resolve(__dirname, '..');
-const configRoot = process.env.DSH_HOME || path.join(process.env.USERPROFILE, '.rrma-deepseek-harness');
+const configRoot = process.env.DSH_HOME || path.join(process.env.USERPROFILE, '.deepseek-harness-vscode');
 const harnessRoot = process.env.DSH_HARNESS_ROOT || path.join(process.env.USERPROFILE, '.deepseek-harness');
 const cwd = process.env.DSH_TEST_WORKSPACE || repoRoot;
 const transport = new AcpTransport({

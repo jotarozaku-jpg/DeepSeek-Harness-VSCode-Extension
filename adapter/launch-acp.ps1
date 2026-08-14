@@ -2,10 +2,16 @@ $ErrorActionPreference = 'Stop'
 
 $adapterRoot = $PSScriptRoot
 $projectRoot = Split-Path -Parent $adapterRoot
+$defaultConfigRoot = Join-Path $env:USERPROFILE '.deepseek-harness-vscode'
+$legacyConfigRoot = Join-Path $env:USERPROFILE '.rrma-deepseek-harness'
 $configRoot = if ($env:DSH_HOME) {
     $env:DSH_HOME
+} elseif (Test-Path -LiteralPath $defaultConfigRoot) {
+    $defaultConfigRoot
+} elseif (Test-Path -LiteralPath $legacyConfigRoot) {
+    $legacyConfigRoot
 } else {
-    Join-Path $env:USERPROFILE '.rrma-deepseek-harness'
+    $defaultConfigRoot
 }
 $harnessRoot = if ($env:DSH_HARNESS_ROOT) {
     $env:DSH_HARNESS_ROOT

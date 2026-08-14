@@ -31,6 +31,7 @@ function isSensitive(relativePath) {
   const leaf = basename(normalized)
   const segments = normalized.split('/')
   return segments.includes('.deepseek')
+    || segments.includes('.deepseek-harness-vscode')
     || segments.includes('.rrma-deepseek-harness')
     || segments.includes('.dsh')
     || segments.includes('.git')

@@ -6,10 +6,16 @@ $harnessRoot = if ($env:DSH_HARNESS_ROOT) {
 } else {
     Join-Path $env:USERPROFILE '.deepseek-harness'
 }
+$defaultConfigRoot = Join-Path $env:USERPROFILE '.deepseek-harness-vscode'
+$legacyConfigRoot = Join-Path $env:USERPROFILE '.rrma-deepseek-harness'
 $configRoot = if ($env:DSH_HOME) {
     $env:DSH_HOME
+} elseif (Test-Path -LiteralPath $defaultConfigRoot) {
+    $defaultConfigRoot
+} elseif (Test-Path -LiteralPath $legacyConfigRoot) {
+    $legacyConfigRoot
 } else {
-    Join-Path $env:USERPROFILE '.rrma-deepseek-harness'
+    $defaultConfigRoot
 }
 $versionFile = Join-Path $PSScriptRoot 'harness-version.txt'
 $pinnedCommit = (Get-Content -LiteralPath $versionFile -Raw).Trim()

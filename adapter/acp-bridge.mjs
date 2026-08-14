@@ -9,7 +9,13 @@ const name = 'rrma-deepseek-harness'
 process.title = name
 const harnessRoot = process.env.DSH_HARNESS_ROOT
 const requestedConfig = process.env.DSH_CORDIS_CONFIG
-const configRoot = resolve(process.env.DSH_HOME ?? join(homedir(), '.rrma-deepseek-harness'))
+const defaultConfigRoot = join(homedir(), '.deepseek-harness-vscode')
+const legacyConfigRoot = join(homedir(), '.rrma-deepseek-harness')
+const fallbackConfigRoot = existsSync(defaultConfigRoot)
+  ? defaultConfigRoot
+  : existsSync(legacyConfigRoot) ? legacyConfigRoot : defaultConfigRoot
+const configuredHome = process.env.DSH_HOME?.trim()
+const configRoot = resolve(configuredHome || fallbackConfigRoot)
 
 if (!harnessRoot) throw new Error('DSH_HARNESS_ROOT is required.')
 if (!requestedConfig) throw new Error('DSH_CORDIS_CONFIG is required.')

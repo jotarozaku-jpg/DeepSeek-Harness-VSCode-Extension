@@ -5,6 +5,7 @@ dist/
 .runtime.cordis.yml
 .dsh/
 .deepseek-harness/
+.deepseek-harness-vscode/
 .rrma-deepseek-harness/
 .sessions/
 .env

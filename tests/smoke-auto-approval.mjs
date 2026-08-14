@@ -26,6 +26,7 @@ const exec = (name, filePath) => ({
 })
 
 assert.deepEqual(await approvalHook(exec('read', 'package.json')), { kind: 'allow' })
+assert.equal((await approvalHook(exec('read', '.deepseek-harness-vscode/.credentials.yaml'))).kind, 'ask')
 assert.equal((await approvalHook(exec('read', '.rrma-deepseek-harness/.credentials.yaml'))).kind, 'ask')
 assert.equal((await approvalHook(exec('read', '../outside.txt'))).kind, 'ask')
 assert.equal((await approvalHook(exec('pwsh'))).kind, 'ask')

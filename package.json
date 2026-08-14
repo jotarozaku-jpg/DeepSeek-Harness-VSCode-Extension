@@ -7,12 +7,12 @@
   "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jotarozaku-jpg/RRMA-DeepseekHarness.git"
+    "url": "https://github.com/jotarozaku-jpg/DeepSeek-Harness-VSCode-Extension.git"
   },
   "bugs": {
-    "url": "https://github.com/jotarozaku-jpg/RRMA-DeepseekHarness/issues"
+    "url": "https://github.com/jotarozaku-jpg/DeepSeek-Harness-VSCode-Extension/issues"
   },
-  "homepage": "https://github.com/jotarozaku-jpg/RRMA-DeepseekHarness#readme",
+  "homepage": "https://github.com/jotarozaku-jpg/DeepSeek-Harness-VSCode-Extension#readme",
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -96,7 +96,7 @@
           "type": "string",
           "default": "",
           "scope": "machine",
-          "description": "Machine-local configuration directory. Empty uses ~/.rrma-deepseek-harness."
+          "description": "Machine-local configuration directory. Empty uses ~/.deepseek-harness-vscode (with fallback to the legacy ~/.rrma-deepseek-harness when it already exists)."
         },
         "deepseekHarness.harnessRoot": {
           "type": "string",

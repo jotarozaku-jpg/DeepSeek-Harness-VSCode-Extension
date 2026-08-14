@@ -17,8 +17,8 @@ The project is source-only. Do not search for, download, upload, or publish a pr
 
 1. Verify `git`, `node`, `npm`, and `code` are available.
 2. From the repository root, run `adapter\setup.ps1`. It installs the pinned official Harness under `%USERPROFILE%\.deepseek-harness` by default. The extension does not run this automatically.
-3. Ensure `%USERPROFILE%\.rrma-deepseek-harness` exists.
-4. If `.credentials.yaml` is absent, copy `.credentials.example.yaml` to that name and stop for the owner to enter the key locally.
+3. Use the machine-local configuration directory printed by `setup.ps1`. A new installation uses `%USERPROFILE%\.deepseek-harness-vscode`; if only the legacy `%USERPROFILE%\.rrma-deepseek-harness` exists, setup keeps using it rather than moving or copying secrets without the owner's explicit approval.
+4. In that selected directory, if `.credentials.yaml` is absent, copy `.credentials.example.yaml` to that name and stop for the owner to enter the key locally.
 5. Run `npm.cmd run check` and the three default smoke tests.
 6. Run `npm.cmd run package` locally. Treat the generated VSIX as a local build artifact; do not upload or redistribute it.
 7. Install `dist\rrma-deepseek-harness.vsix` with `code --install-extension` only after confirmation.

@@ -11,7 +11,14 @@ const { normalizeApprovalMode, normalizeAutoAllowTools, redactSecrets, SecretRed
 const TURN_STALL_MS = 90_000;
 const CANCEL_ESCALATION_MS = 6_000;
 const MAX_DIFF_TEXT_BYTES = 2 * 1024 * 1024;
-const DEFAULT_CONFIG_ROOT = path.join(os.homedir(), '.rrma-deepseek-harness');
+const DEFAULT_CONFIG_ROOT = path.join(os.homedir(), '.deepseek-harness-vscode');
+const LEGACY_CONFIG_ROOT = path.join(os.homedir(), '.rrma-deepseek-harness');
+
+function resolveDefaultConfigRoot() {
+  if (fs.existsSync(DEFAULT_CONFIG_ROOT)) return DEFAULT_CONFIG_ROOT;
+  if (fs.existsSync(LEGACY_CONFIG_ROOT)) return LEGACY_CONFIG_ROOT;
+  return DEFAULT_CONFIG_ROOT;
+}
 
 class DiffContentProvider {
   constructor() {
@@ -275,7 +282,7 @@ class DeepSeekChatController {
   }
 
   resolveConfigRoot(config = vscode.workspace.getConfiguration('deepseekHarness')) {
-    return String(this.secureSetting(config, 'configRoot', '') || '').trim() || DEFAULT_CONFIG_ROOT;
+    return String(this.secureSetting(config, 'configRoot', '') || '').trim() || resolveDefaultConfigRoot();
   }
 
   resolveHarnessRoot(config = vscode.workspace.getConfiguration('deepseekHarness')) {
@@ -663,7 +670,7 @@ class DeepSeekChatController {
     const needle = query.trim().toLowerCase().slice(0, 100);
     const uris = await vscode.workspace.findFiles(
       '**/*',
-      '**/{.git,node_modules,dist,build,.deepseek,.dsh,.sessions}/**',
+      '**/{.git,node_modules,dist,build,.deepseek,.deepseek-harness-vscode,.rrma-deepseek-harness,.dsh,.sessions}/**',
       500,
     );
     const files = uris

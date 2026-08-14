@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const harnessRoot = process.env.DSH_HARNESS_ROOT || join(process.env.USERPROFILE, '.deepseek-harness')
-const configRoot = process.env.DSH_HOME || join(process.env.USERPROFILE, '.rrma-deepseek-harness')
+const configRoot = process.env.DSH_HOME || join(process.env.USERPROFILE, '.deepseek-harness-vscode')
 const runtimeConfig = join(configRoot, '.runtime.cordis.yml')
 const moduleAnchor = join(harnessRoot, 'examples', 'acp-agent', 'cordis.yml')
 const bootPath = join(harnessRoot, 'packages', 'boot', 'app-boot', 'lib', 'index.js')
