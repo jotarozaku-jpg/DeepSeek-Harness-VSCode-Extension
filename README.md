@@ -21,6 +21,22 @@
 - 打断、引导和 Compact
 - Input、Output 与缓存 Token 估算
 
+## ACP 是什么，以及本项目如何使用它
+
+[Agent Client Protocol（ACP）](https://agentclientprotocol.com/get-started/introduction) 是连接代码编辑器与编程 Agent 的开放协议，作用类似于 LSP 把编辑器和语言服务器解耦。对于本地 Agent，编辑器通常启动一个子进程，并通过标准输入/输出交换双向 JSON-RPC 消息：客户端发送提示词、会话控制和取消请求；Agent 则流式返回文本、思考、Tool Call、diff 等更新，也可以反向请求客户端进行权限确认。详见 [ACP 架构说明](https://agentclientprotocol.com/get-started/architecture)。
+
+```mermaid
+flowchart LR
+  A["Visual Studio Code 扩展<br/>ACP Client"] <-->|"JSON-RPC 2.0<br/>stdin / stdout"| B["ACP 兼容适配层<br/>本地子进程"]
+  B <--> C["DeepSeek Harness"]
+  C --> D["DeepSeek API"]
+  C <--> E["工作区、工具与沙盒"]
+```
+
+在本项目中，Visual Studio Code 扩展负责聊天 UI、会话控制和人工审核；兼容适配层启动外部 DeepSeek Harness，并把两边的 ACP 消息相互转发。连接时先通过 `initialize` 协商协议版本，随后使用 `session/new`、`session/resume`、`session/prompt` 和 `session/cancel` 管理对话。Harness 发出的流式更新与 `session/request_permission` 请求会返回扩展，由界面展示或交由使用者决定。
+
+ACP 与 MCP 不是同一种协议：ACP 主要连接编辑器与 Agent，MCP 主要帮助 Agent 接入外部工具和数据源，两者可以同时使用。本项目中的 ACP 链路在本机进程之间运行，但 Harness 调用模型时仍会访问 DeepSeek API；提示词、选中的文件、工作区上下文和工具结果仍可能被发送到服务端。
+
 ## 项目边界
 
 这个仓库只包含：
@@ -82,6 +98,22 @@ This is a standalone Visual Studio Code extension project. It does not contain t
 - Native diffs and workspace file references
 - Interrupt, steer and compact controls
 - Input, output and cache-token estimates
+
+### What ACP is and how this project uses it
+
+[Agent Client Protocol (ACP)](https://agentclientprotocol.com/get-started/introduction) is an open protocol connecting code editors to coding agents, much like LSP decouples editors from language servers. For a local agent, the editor typically starts a subprocess and exchanges bidirectional JSON-RPC messages over standard input and output. The client sends prompts, session controls and cancellation requests; the agent streams text, thoughts, tool calls, diffs and other updates back, and can request permission from the client. See the official [ACP architecture documentation](https://agentclientprotocol.com/get-started/architecture).
+
+```mermaid
+flowchart LR
+  A["Visual Studio Code extension<br/>ACP Client"] <-->|"JSON-RPC 2.0<br/>stdin / stdout"| B["ACP compatibility adapter<br/>local subprocess"]
+  B <--> C["DeepSeek Harness"]
+  C --> D["DeepSeek API"]
+  C <--> E["Workspace, tools and sandbox"]
+```
+
+In this project, the Visual Studio Code extension owns the chat UI, session controls and human approval flow. The compatibility adapter starts the external DeepSeek Harness and relays ACP messages in both directions. The connection negotiates a protocol version through `initialize`, then uses `session/new`, `session/resume`, `session/prompt` and `session/cancel` to manage conversations. Streaming updates and `session/request_permission` calls from Harness return to the extension for display or a human decision.
+
+ACP and MCP serve different roles: ACP primarily connects an editor to an agent, while MCP primarily connects an agent to external tools and data sources; they can be used together. The ACP link used here stays between local processes, but Harness still reaches the DeepSeek API for model calls. Prompts, selected files, workspace context and tool results may therefore still be sent to the service.
 
 ### Project boundary
 
