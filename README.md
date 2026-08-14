@@ -1,14 +1,10 @@
-# RRMA DeepseekHarness
+# DeepSeek Harness for Visual Studio Code
 
-一个通过 ACP 连接 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方 Visual Studio Code 客户端。
+一个把 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 接入 Visual Studio Code 的非官方图形客户端，提供聊天、思考过程、Tool Call、权限审核、会话恢复和用量估算。
 
-这是独立的 Visual Studio Code 扩展项目。仓库不包含 DeepSeek Harness 源码，也不包含任何 RRMA 私有配置、人格提示、API Key 或对话记录。
+这是独立的 Visual Studio Code 扩展项目，通过 ACP 与外部 Harness 通信。仓库不包含 DeepSeek Harness 源码，也不包含任何私人配置、人格提示、API Key 或对话记录。
 
 > 状态：早期预览。DeepSeek Harness 本身仍处于开发者预览阶段；在上游 ACP 入口趋于稳定之前，本扩展暂时使用固定版本的小型兼容适配层。
-
-## 界面预览 / Interface preview
-
-![RRMA DeepseekHarness 在 Visual Studio Code 中的界面 / RRMA DeepseekHarness in Visual Studio Code](docs/images/rrma-deepseek-harness-vscode.png)
 
 ## 功能
 
@@ -52,7 +48,7 @@ ACP 与 MCP 不是同一种协议：ACP 主要连接编辑器与 Agent，MCP 主
 
 本项目只公开源码，不发布或分发预先打包的 `.vsix`，也不上架 Visual Studio Marketplace。每位使用者需要自行准备外部 Harness、在本地打包扩展，再安装自己生成的 VSIX。扩展会检查外部 Harness 是否缺失并提供安装说明入口，但不会自动下载或修改 Harness。
 
-参见[安装说明](docs/INSTALL.md)；如果希望让 Codex、Claude Code 等 Agent 协助安装，可使用[面向 Agent 的安装说明](docs/INSTALL_FOR_AGENTS.md)。准备完成后，按 `Ctrl+Alt+D`，或从命令面板运行 `RRMA DeepseekHarness: Open Chat`。
+参见[安装说明](docs/INSTALL.md)；如果希望让 Codex、Claude Code 等 Agent 协助安装，可使用[面向 Agent 的安装说明](docs/INSTALL_FOR_AGENTS.md)。准备完成后，按 `Ctrl+Alt+D`，或从命令面板运行本扩展的 `Open Chat` 命令。
 
 ## 开发
 
@@ -82,9 +78,9 @@ DeepSeek 与 DeepSeek Harness 属于其各自权利人。本项目与 DeepSeek �
 
 ## English
 
-An unofficial Visual Studio Code client for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), connected over ACP.
+An unofficial graphical client that brings [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) into Visual Studio Code, with chat, thought display, tool calls, permission review, session recovery and usage estimates.
 
-This is a standalone Visual Studio Code extension project. It does not contain the DeepSeek Harness source tree, private RRMA configuration, persona prompts, API keys, or conversation records.
+This is a standalone Visual Studio Code extension that communicates with an external Harness over ACP. It does not contain the DeepSeek Harness source tree, private configuration, persona prompts, API keys, or conversation records.
 
 > Status: early preview. DeepSeek Harness itself is currently a developer preview, and this extension uses a pinned compatibility adapter while the upstream ACP entry point is still evolving.
 
@@ -130,7 +126,7 @@ The official Harness checkout and its dependencies are installed outside this re
 
 This is a source-only project. The repository does not publish or distribute prebuilt `.vsix` files and is not listed on the Visual Studio Marketplace. Each user prepares the external Harness, packages the extension locally, and installs the locally generated VSIX. The extension detects missing runtime files and links to the setup guide, but deliberately does not download or modify Harness automatically.
 
-See [Installation](docs/INSTALL.md) or [Agent-assisted installation](docs/INSTALL_FOR_AGENTS.md). After setup, use `Ctrl+Alt+D` or run `RRMA DeepseekHarness: Open Chat` from the Command Palette.
+See [Installation](docs/INSTALL.md) or [Agent-assisted installation](docs/INSTALL_FOR_AGENTS.md). After setup, use `Ctrl+Alt+D` or run this extension's `Open Chat` command from the Command Palette.
 
 ### Development
 
