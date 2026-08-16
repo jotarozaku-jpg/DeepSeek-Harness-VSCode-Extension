@@ -12,11 +12,50 @@ const TURN_STALL_MS = 90_000;
 const CANCEL_ESCALATION_MS = 6_000;
 const MAX_DIFF_TEXT_BYTES = 2 * 1024 * 1024;
 const DEFAULT_CONFIG_ROOT = path.join(os.homedir(), '.deepseek-harness-vscode');
-const LEGACY_CONFIG_ROOT = path.join(os.homedir(), '.rrma-deepseek-harness');
+
+const OPTIONAL_FEATURE_GROUPS = Object.freeze([
+  { id: 'skills', label: 'Skills', description: '发现并调用配置目录中的自定义 Skills。', pluginIds: ['skill', 'skill-filesystem', 'tool-skill'] },
+  { id: 'subagents', label: 'Subagent', description: '允许主 Agent 创建、派生和管理子 Agent。', pluginIds: ['subagent', 'subagent-spawn-in-process', 'subagent-fork-in-process', 'tool-subagent-control', 'tool-subagent-list-agents', 'tool-subagent-report', 'tool-subagent', 'tool-subagent-fork'] },
+  { id: 'workflows', label: 'Workflow / Ralph', description: '启用工作流执行器和 Ralph 长任务循环。', pluginIds: ['workflow-worker-thread', 'tool-workflow', 'tool-ralph'] },
+  { id: 'todo', label: 'Todo 与重复提醒', description: '启用任务列表工具和重复调用提醒。', pluginIds: ['tool-todo', 'repeat-tool-reminder'] },
+  { id: 'compaction', label: '上下文压缩', description: '启用 Harness 上下文压缩和 Compact 功能。', pluginIds: ['compaction-basic'] },
+]);
+const FEATURE_GROUP_IDS = new Set(OPTIONAL_FEATURE_GROUPS.map((item) => item.id));
+
+function normalizeDisabledFeatureGroups(value) {
+  return [...new Set((Array.isArray(value) ? value : []).filter((item) => FEATURE_GROUP_IDS.has(item)))];
+}
+
+function configuredCordisPlugins(configRoot, disabledGroups = []) {
+  const configPath = path.join(configRoot, 'cordis.yml');
+  let source = '';
+  try { source = fs.readFileSync(configPath, 'utf8'); } catch { return []; }
+  const disabled = new Set(normalizeDisabledFeatureGroups(disabledGroups));
+  const plugins = [];
+  let current;
+  for (const line of source.split(/\r?\n/)) {
+    const idMatch = line.match(/^- id:\s*['"]?([^'"\s]+)['"]?\s*$/);
+    if (idMatch) {
+      current = { id: idMatch[1], name: '', source: 'official', groupId: undefined, enabled: true, locked: true };
+      const group = OPTIONAL_FEATURE_GROUPS.find((item) => item.pluginIds.includes(current.id));
+      if (group) {
+        current.groupId = group.id;
+        current.enabled = !disabled.has(group.id);
+        current.locked = false;
+      }
+      plugins.push(current);
+      continue;
+    }
+    const nameMatch = current && line.match(/^\s{2}name:\s*(.+?)\s*$/);
+    if (!nameMatch) continue;
+    current.name = nameMatch[1].replace(/^['"]|['"]$/g, '');
+    if (current.name.startsWith('./')) current.source = 'local';
+    else if (current.name.startsWith('__') || current.name.startsWith('file:')) current.source = 'runtime';
+  }
+  return plugins;
+}
 
 function resolveDefaultConfigRoot() {
-  if (fs.existsSync(DEFAULT_CONFIG_ROOT)) return DEFAULT_CONFIG_ROOT;
-  if (fs.existsSync(LEGACY_CONFIG_ROOT)) return LEGACY_CONFIG_ROOT;
   return DEFAULT_CONFIG_ROOT;
 }
 
@@ -145,6 +184,8 @@ class DeepSeekChatController {
     this.stderrBuffer = undefined;
     this.sessionControls = new Map();
     this.pendingInputText = '';
+    this.cancelRequested = new Set();
+    this.connectionState = 'disconnected';
     this.disposables = [];
   }
 
@@ -157,7 +198,7 @@ class DeepSeekChatController {
     const mediaRoot = vscode.Uri.joinPath(this.context.extensionUri, 'media');
     this.panel = existingPanel || vscode.window.createWebviewPanel(
       'deepseekHarness.chat',
-      'RRMA DeepseekHarness',
+      'DeepSeek Harness',
       vscode.ViewColumn.Active,
       {
         enableScripts: true,
@@ -165,7 +206,7 @@ class DeepSeekChatController {
         localResourceRoots: [mediaRoot],
       },
     );
-    this.panel.title = 'RRMA DeepseekHarness';
+    this.panel.title = 'DeepSeek Harness';
     this.panel.iconPath = vscode.Uri.joinPath(mediaRoot, 'icon.svg');
     this.panel.webview.options = {
       enableScripts: true,
@@ -225,6 +266,9 @@ class DeepSeekChatController {
       case 'compact':
         await this.compactConversation(String(message.conversationId || this.activeConversationId || ''));
         break;
+      case 'clearConversation':
+        await this.clearConversation(String(message.conversationId || this.activeConversationId || ''));
+        break;
       case 'cancel':
         this.cancelTurn(String(message.conversationId || this.activeConversationId || ''));
         break;
@@ -244,10 +288,34 @@ class DeepSeekChatController {
         await this.setSessionConfigOption(String(message.conversationId || ''), String(message.configId || ''), message.value);
         break;
       case 'openSettings':
-        await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:rrma.rrma-deepseek-harness');
+        await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:community.deepseek-harness-vscode');
+        break;
+      case 'openLogs':
+        this.output.show(true);
+        break;
+      case 'restartRuntime':
+        await this.restartRuntime(String(message.conversationId || this.activeConversationId || ''));
+        break;
+      case 'requestDiagnostics':
+        this.post({ type: 'diagnostics', ...this.buildDiagnostics() });
+        break;
+      case 'copyDiagnostics':
+        await this.copyDiagnostics();
         break;
       case 'setApprovalMode':
         await this.setApprovalMode(String(message.value || 'manual'));
+        break;
+      case 'setAutoAllowRead':
+        await this.setAutoAllowRead(message.value === true);
+        break;
+      case 'setFeatureGroup':
+        await this.setFeatureGroup(String(message.groupId || ''), message.enabled === true);
+        break;
+      case 'openCordisConfig':
+        await this.openManagedPath('config');
+        break;
+      case 'openPluginDirectory':
+        await this.openManagedPath('plugins');
         break;
       case 'setThoughtDisplay':
         await this.setThoughtDisplay(String(message.value || 'collapsed'));
@@ -265,15 +333,97 @@ class DeepSeekChatController {
 
   describeConfiguration() {
     const config = vscode.workspace.getConfiguration('deepseekHarness');
+    const configRoot = this.resolveConfigRoot(config);
+    const harnessRoot = this.resolveHarnessRoot(config);
+    const disabledFeatureGroups = normalizeDisabledFeatureGroups(this.secureSetting(config, 'disabledFeatureGroups', []));
     return {
       model: config.get('modelLabel', 'DeepSeek V4 Pro'),
       cwd: this.resolveWorkingDirectory(config),
-      configRoot: this.resolveConfigRoot(config),
+      configRoot,
+      harnessRoot,
+      nodePath: String(this.secureSetting(config, 'nodePath', 'node') || 'node'),
+      sessionRoot: String(process.env.DSH_SESSION_ROOT || path.join(os.homedir(), '.dsh', '.sessions')),
+      credentialsConfigured: fs.existsSync(path.join(configRoot, '.credentials.yaml')),
+      preset: 'Current Cordis configuration',
+      reasoningEffort: '由 Harness 配置决定',
+      extensionVersion: String(this.context.extension.packageJSON.version || ''),
+      featureGroups: OPTIONAL_FEATURE_GROUPS.map((item) => ({
+        id: item.id,
+        label: item.label,
+        description: item.description,
+        pluginCount: item.pluginIds.length,
+        enabled: !disabledFeatureGroups.includes(item.id),
+      })),
       approvalMode: normalizeApprovalMode(this.secureSetting(config, 'approvalMode', 'manual')),
       autoAllowTools: normalizeAutoAllowTools(this.secureSetting(config, 'autoAllowTools', [])),
       thoughtDisplay: config.get('thoughtDisplay', 'collapsed'),
       runtimeId: this.runtimeId,
     };
+  }
+
+  buildDiagnostics() {
+    const configuration = this.describeConfiguration();
+    const disabledFeatureGroups = configuration.featureGroups.filter((item) => !item.enabled).map((item) => item.id);
+    const pluginInventory = configuredCordisPlugins(path.join(this.context.extensionPath, 'adapter'), disabledFeatureGroups);
+    let localPluginFiles = [];
+    try {
+      localPluginFiles = fs.readdirSync(path.join(configuration.configRoot, 'plugins'), { withFileTypes: true })
+        .filter((entry) => entry.isFile() && /\.(?:mjs|cjs|js)$/i.test(entry.name))
+        .map((entry) => entry.name)
+        .sort((a, b) => a.localeCompare(b));
+    } catch { /* optional directory */ }
+    const bridgePath = path.join(this.context.extensionPath, 'adapter', 'acp-bridge.mjs');
+    const cordisPath = path.join(this.context.extensionPath, 'adapter', 'cordis.yml');
+    const checks = [
+      ['工作目录', configuration.cwd, configuration.cwd && fs.existsSync(configuration.cwd)],
+      ['Harness 目录', configuration.harnessRoot, configuration.harnessRoot && fs.existsSync(configuration.harnessRoot)],
+      ['配置目录', configuration.configRoot, configuration.configRoot && fs.existsSync(configuration.configRoot)],
+      ['ACP 桥接文件', bridgePath, fs.existsSync(bridgePath)],
+      ['Cordis 配置', cordisPath, fs.existsSync(cordisPath)],
+      ['API 凭据', '仅检查是否已配置，不读取内容', configuration.credentialsConfigured],
+      ['会话目录', configuration.sessionRoot, fs.existsSync(configuration.sessionRoot)],
+    ].map(([label, detail, ok]) => ({ label, detail: String(detail || ''), ok: Boolean(ok) }));
+    return {
+      configuration,
+      connected: this.connectionState === 'connected',
+      connectionState: this.connectionState,
+      runtimeId: this.runtimeId,
+      activeTurns: this.turnsInProgress.size,
+      checks,
+      pluginInventory,
+      localPluginFiles,
+    };
+  }
+
+  async copyDiagnostics() {
+    const data = this.buildDiagnostics();
+    const home = os.homedir();
+    const hideHome = (value) => String(value || '').replaceAll(home, '%USERPROFILE%');
+    const payload = {
+      extensionVersion: data.configuration.extensionVersion,
+      model: data.configuration.model,
+      preset: data.configuration.preset,
+      reasoningEffort: data.configuration.reasoningEffort,
+      approvalMode: data.configuration.approvalMode,
+      autoAllowTools: data.configuration.autoAllowTools,
+      featureGroups: data.configuration.featureGroups,
+      connected: data.connected,
+      connectionState: data.connectionState,
+      activeTurns: data.activeTurns,
+      runtimeId: data.runtimeId,
+      paths: {
+        cwd: hideHome(data.configuration.cwd),
+        harnessRoot: hideHome(data.configuration.harnessRoot),
+        configRoot: hideHome(data.configuration.configRoot),
+        sessionRoot: hideHome(data.configuration.sessionRoot),
+        nodePath: hideHome(data.configuration.nodePath),
+      },
+      checks: data.checks.map((item) => ({ ...item, detail: hideHome(item.detail) })),
+      plugins: data.pluginInventory,
+      localPluginFiles: data.localPluginFiles,
+    };
+    await vscode.env.clipboard.writeText(JSON.stringify(payload, null, 2));
+    void vscode.window.showInformationMessage('已复制脱敏诊断信息，API Key 和凭据内容未被读取。');
   }
 
   secureSetting(config, key, fallback) {
@@ -321,7 +471,7 @@ class DeepSeekChatController {
     const choice = await vscode.window.showWarningMessage(message, '打开安装说明', '打开扩展设置');
     if (choice === '打开安装说明') await this.openInstallGuide();
     if (choice === '打开扩展设置') {
-      await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:rrma.rrma-deepseek-harness');
+      await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:community.deepseek-harness-vscode');
     }
   }
 
@@ -333,6 +483,10 @@ class DeepSeekChatController {
     const nodePath = String(this.secureSetting(config, 'nodePath', 'node') || 'node');
     const approvalMode = normalizeApprovalMode(this.secureSetting(config, 'approvalMode', 'manual'));
     const autoAllowTools = normalizeAutoAllowTools(this.secureSetting(config, 'autoAllowTools', []));
+    const disabledFeatureGroups = normalizeDisabledFeatureGroups(this.secureSetting(config, 'disabledFeatureGroups', []));
+    const disabledPluginIds = OPTIONAL_FEATURE_GROUPS
+      .filter((item) => disabledFeatureGroups.includes(item.id))
+      .flatMap((item) => item.pluginIds);
     const adapterRoot = path.join(this.context.extensionPath, 'adapter');
     const bridgePath = path.join(adapterRoot, 'acp-bridge.mjs');
     const cordisPath = path.join(adapterRoot, 'cordis.yml');
@@ -349,11 +503,13 @@ class DeepSeekChatController {
     ];
     for (const [target, label] of required) {
       if (!target || !fs.existsSync(target)) {
+        this.connectionState = 'error';
         await this.showSetupHelp(`${label} 不存在：${target}`);
         return false;
       }
     }
 
+    this.connectionState = 'connecting';
     this.post({ type: 'connection', state: 'connecting', message: '正在启动 Harness…' });
     this.transport = new AcpTransport({
       command: nodePath,
@@ -366,6 +522,7 @@ class DeepSeekChatController {
         DSH_PERMISSION_MODE: approvalMode === 'full-access' ? 'danger-full-access' : 'workspace-write',
         DSH_APPROVAL_MODE: approvalMode,
         DSH_AUTO_ALLOW_TOOLS: JSON.stringify(autoAllowTools),
+        DSH_DISABLED_PLUGIN_IDS: JSON.stringify(disabledPluginIds),
       },
       onRequest: (method, params) => this.handleAgentRequest(method, params),
     });
@@ -380,8 +537,19 @@ class DeepSeekChatController {
       if (this.stderrBuffer === stderrBuffer) this.stderrBuffer = undefined;
       if (this.transport === transport) {
         this.transport = undefined;
+        this.connectionState = 'error';
         this.sessionIds.clear();
         this.localByBackend.clear();
+        const stoppedConversations = [...this.turnsInProgress];
+        this.turnsInProgress.clear();
+        for (const conversationId of stoppedConversations) {
+          this.clearTurnTimers(conversationId);
+          this.post({ type: 'turnState', conversationId, active: false });
+          if (this.cancelRequested.delete(conversationId)) {
+            this.post({ type: 'cancelState', conversationId, state: 'stopped' });
+          }
+        }
+        void vscode.commands.executeCommand('setContext', 'deepseekHarness.turnInProgress', false);
         this.post({ type: 'connection', state: 'error', message: redactSecrets(error.message) });
       }
     });
@@ -391,8 +559,9 @@ class DeepSeekChatController {
       const initialized = await this.transport.request('initialize', {
         protocolVersion: 1,
         clientCapabilities: {},
-        clientInfo: { name: 'rrma-deepseek-harness-vscode', version: this.context.extension.packageJSON.version },
+        clientInfo: { name: 'deepseek-harness-vscode', version: this.context.extension.packageJSON.version },
       });
+      this.connectionState = 'connected';
       this.post({
         type: 'connection',
         state: 'connected',
@@ -463,6 +632,32 @@ class DeepSeekChatController {
     if (sessionId) this.post({ type: 'conversationSelected', conversationId, isNew });
   }
 
+  async clearConversation(conversationId) {
+    if (!conversationId) return;
+    if (this.turnsInProgress.has(conversationId)) {
+      this.post({ type: 'connectionNotice', conversationId, message: '请先停止当前任务，再清空对话上下文。' });
+      return;
+    }
+    const previousSessionId = this.sessionIds.get(conversationId);
+    const previousControls = this.sessionControls.get(conversationId);
+    this.sessionControls.delete(conversationId);
+    this.sessionIds.delete(conversationId);
+    const nextSessionId = await this.startSession(conversationId);
+    if (!nextSessionId) {
+      if (previousSessionId) {
+        this.sessionIds.set(conversationId, previousSessionId);
+        this.localByBackend.set(previousSessionId, conversationId);
+      }
+      if (previousControls) this.sessionControls.set(conversationId, previousControls);
+      return;
+    }
+    if (previousSessionId && previousSessionId !== nextSessionId) this.localByBackend.delete(previousSessionId);
+    for (const key of [...this.toolCalls.keys()]) {
+      if (key.startsWith(`${conversationId}:`)) this.toolCalls.delete(key);
+    }
+    this.post({ type: 'conversationCleared', conversationId, sessionId: nextSessionId, runtimeId: this.runtimeId });
+  }
+
   async sendPrompt(text, conversationId) {
     const prompt = text.trim();
     if (!prompt || !conversationId || this.turnsInProgress.has(conversationId)) return;
@@ -488,6 +683,7 @@ class DeepSeekChatController {
       this.turnsInProgress.delete(conversationId);
       await vscode.commands.executeCommand('setContext', 'deepseekHarness.turnInProgress', this.turnsInProgress.size > 0);
       this.post({ type: 'turnState', conversationId, active: false });
+      this.finishCancelState(conversationId);
     }
   }
 
@@ -497,7 +693,7 @@ class DeepSeekChatController {
     const sessionId = this.sessionIds.get(conversationId);
     if (!this.transport || !sessionId) return;
     try {
-      await this.transport.request('rrma.dev/session/steer', { sessionId, text: prompt });
+      await this.transport.request('deepseek-harness-vscode/session/steer', { sessionId, text: prompt });
       this.post({ type: 'userMessage', conversationId, text: prompt, steering: true });
       this.post({ type: 'connectionNotice', conversationId, message: '补充引导已加入当前任务，将在下一步生效。' });
     } catch (error) {
@@ -528,7 +724,14 @@ class DeepSeekChatController {
     } finally {
       this.turnsInProgress.delete(conversationId);
       this.post({ type: 'compactState', conversationId, active: false });
+      this.finishCancelState(conversationId);
     }
+  }
+
+  finishCancelState(conversationId) {
+    if (!this.cancelRequested.has(conversationId)) return;
+    this.cancelRequested.delete(conversationId);
+    this.post({ type: 'cancelState', conversationId, state: 'stopped' });
   }
 
   handleNotification(method, params) {
@@ -596,6 +799,8 @@ class DeepSeekChatController {
       this.post({ type: 'turnState', conversationId, active: false });
       return;
     }
+    this.cancelRequested.add(conversationId);
+    this.post({ type: 'cancelState', conversationId, state: 'requested' });
     this.transport.notify('session/cancel', { sessionId });
     const previous = this.cancelEscalationTimers.get(conversationId);
     if (previous) clearTimeout(previous);
@@ -603,6 +808,7 @@ class DeepSeekChatController {
     this.cancelEscalationTimers.set(conversationId, setTimeout(() => {
       this.cancelEscalationTimers.delete(conversationId);
       if (this.transport !== transport || !this.turnsInProgress.has(conversationId)) return;
+      this.post({ type: 'cancelState', conversationId, state: 'escalated' });
       void this.offerForceRestart(conversationId, 'Harness 没有响应停止请求。');
     }, CANCEL_ESCALATION_MS));
     for (const [id, pending] of this.pendingPermissions) {
@@ -610,7 +816,6 @@ class DeepSeekChatController {
       pending.resolve({ outcome: { outcome: 'cancelled' } });
       this.pendingPermissions.delete(id);
     }
-    this.post({ type: 'connectionNotice', conversationId, message: '正在取消当前任务…' });
   }
 
   scheduleTurnStallCheck(conversationId) {
@@ -656,7 +861,6 @@ class DeepSeekChatController {
     const resumeSessionId = this.sessionIds.get(conversationId);
     this.stopTransport();
     this.runtimeId = crypto.randomUUID();
-    this.post({ type: 'turnState', conversationId, active: false });
     this.post({ type: 'connectionNotice', conversationId, message: '已强制停止旧运行时，正在重新连接 Harness…' });
     await this.startSession(conversationId, resumeSessionId);
   }
@@ -670,7 +874,7 @@ class DeepSeekChatController {
     const needle = query.trim().toLowerCase().slice(0, 100);
     const uris = await vscode.workspace.findFiles(
       '**/*',
-      '**/{.git,node_modules,dist,build,.deepseek,.deepseek-harness-vscode,.rrma-deepseek-harness,.dsh,.sessions}/**',
+      '**/{.git,node_modules,dist,build,.deepseek,.deepseek-harness-vscode,.dsh,.sessions}/**',
       500,
     );
     const files = uris
@@ -695,7 +899,7 @@ class DeepSeekChatController {
     const label = boundedString(message.path, '文件变更', 512) || '文件变更';
     const left = this.diffProvider.add(`修改前-${path.basename(label)}`, oldText);
     const right = this.diffProvider.add(`修改后-${path.basename(label)}`, newText);
-    await vscode.commands.executeCommand('vscode.diff', left, right, `RRMA DeepseekHarness · ${label}`, { preview: true });
+    await vscode.commands.executeCommand('vscode.diff', left, right, `DeepSeek Harness · ${label}`, { preview: true });
   }
 
   async setSessionMode(conversationId, modeId) {
@@ -782,11 +986,92 @@ class DeepSeekChatController {
     if (this.activeConversationId) await this.startSession(this.activeConversationId);
   }
 
+  async setAutoAllowRead(enabled) {
+    const config = vscode.workspace.getConfiguration('deepseekHarness');
+    await config.update('autoAllowTools', enabled ? ['read'] : [], vscode.ConfigurationTarget.Global);
+    const approvalMode = normalizeApprovalMode(this.secureSetting(config, 'approvalMode', 'manual'));
+    this.stopTransport();
+    this.runtimeId = crypto.randomUUID();
+    this.post({
+      type: 'runtimeReset',
+      approvalMode,
+      autoAllowTools: enabled ? ['read'] : [],
+      runtimeId: this.runtimeId,
+      message: `安全读取自动批准已${enabled ? '开启' : '关闭'}，Harness 运行时已重启。`,
+    });
+    if (this.activeConversationId) await this.startSession(this.activeConversationId);
+  }
+
+  async setFeatureGroup(groupId, enabled) {
+    const group = OPTIONAL_FEATURE_GROUPS.find((item) => item.id === groupId);
+    if (!group) return;
+    const config = vscode.workspace.getConfiguration('deepseekHarness');
+    const current = normalizeDisabledFeatureGroups(this.secureSetting(config, 'disabledFeatureGroups', []));
+    const currentlyEnabled = !current.includes(groupId);
+    if (currentlyEnabled === enabled) return;
+    if (!enabled) {
+      const choice = await vscode.window.showWarningMessage(
+        `关闭“${group.label}”功能组？`,
+        { modal: true, detail: `将从下一次 Harness 启动配置中移除 ${group.pluginIds.length} 个相关组件，并创建新的运行时会话。聊天记录不会删除。` },
+        '关闭并重启 Harness',
+      );
+      if (choice !== '关闭并重启 Harness') {
+        this.post({ type: 'featureGroupRejected', groupId, enabled: currentlyEnabled });
+        return;
+      }
+    }
+    const next = enabled ? current.filter((item) => item !== groupId) : [...current, groupId];
+    await config.update('disabledFeatureGroups', normalizeDisabledFeatureGroups(next), vscode.ConfigurationTarget.Global);
+    this.stopTransport();
+    this.runtimeId = crypto.randomUUID();
+    const featureGroups = this.describeConfiguration().featureGroups;
+    this.post({
+      type: 'runtimeReset',
+      runtimeId: this.runtimeId,
+      featureGroups,
+      message: `“${group.label}”已${enabled ? '开启' : '关闭'}，Harness 运行时已重启并使用新的组件目录。`,
+    });
+    if (this.activeConversationId) await this.startSession(this.activeConversationId);
+    this.post({ type: 'diagnostics', ...this.buildDiagnostics() });
+  }
+
+  async openManagedPath(kind) {
+    const configRoot = this.resolveConfigRoot();
+    const target = kind === 'plugins'
+      ? path.join(configRoot, 'plugins')
+      : path.join(this.context.extensionPath, 'adapter', 'cordis.yml');
+    if (!target || !fs.existsSync(target)) {
+      void vscode.window.showWarningMessage(`路径不存在：${target}`);
+      return;
+    }
+    const uri = vscode.Uri.file(target);
+    if (kind === 'plugins') await vscode.commands.executeCommand('revealFileInOS', uri);
+    else await vscode.window.showTextDocument(uri, { preview: true });
+  }
+
   async setThoughtDisplay(value) {
     const allowed = new Set(['expanded', 'collapsed', 'hidden']);
     if (!allowed.has(value)) return;
     await vscode.workspace.getConfiguration('deepseekHarness').update('thoughtDisplay', value, vscode.ConfigurationTarget.Global);
     this.post({ type: 'thoughtDisplayChanged', value });
+  }
+
+  async restartRuntime(conversationId) {
+    const detail = this.turnsInProgress.size > 0
+      ? '当前仍有任务正在运行。重启会立即中断这些任务，但不会删除已经保存的聊天记录。'
+      : '这会重新启动本地 Harness 进程，并为当前对话重新连接会话。聊天记录不会删除。';
+    const choice = await vscode.window.showWarningMessage(
+      '重新启动 DeepSeek Harness？',
+      { modal: true, detail },
+      '重启 Harness',
+    );
+    if (choice !== '重启 Harness') return;
+    const resumeSessionId = conversationId ? this.sessionIds.get(conversationId) : undefined;
+    this.stopTransport();
+    this.runtimeId = crypto.randomUUID();
+    this.post({ type: 'runtimeReset', runtimeId: this.runtimeId, message: 'Harness 运行时已手动重启，正在恢复当前会话。' });
+    if (conversationId) await this.startSession(conversationId, resumeSessionId);
+    this.post({ type: 'diagnostics', ...this.buildDiagnostics() });
   }
 
   async openExternal(rawUrl) {
@@ -819,6 +1104,8 @@ class DeepSeekChatController {
   stopTransport() {
     const transport = this.transport;
     this.transport = undefined;
+    this.connectionState = 'disconnected';
+    const stoppedConversations = [...this.turnsInProgress];
     this.sessionIds.clear();
     this.localByBackend.clear();
     this.toolCalls.clear();
@@ -834,6 +1121,12 @@ class DeepSeekChatController {
     for (const [id, pending] of this.pendingPermissions) {
       pending.resolve({ outcome: { outcome: 'cancelled' } });
       this.pendingPermissions.delete(id);
+    }
+    for (const conversationId of stoppedConversations) {
+      this.post({ type: 'turnState', conversationId, active: false });
+      if (this.cancelRequested.delete(conversationId)) {
+        this.post({ type: 'cancelState', conversationId, state: 'stopped' });
+      }
     }
     void vscode.commands.executeCommand('setContext', 'deepseekHarness.turnInProgress', false);
   }
@@ -860,13 +1153,13 @@ class DeepSeekChatController {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} data:;">
   <link rel="stylesheet" href="${styleUri}">
-  <title>RRMA DeepseekHarness</title>
+  <title>DeepSeek Harness</title>
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
       <span class="brand-mark">DS</span>
-      <div><strong>RRMA DeepseekHarness</strong><span id="modelLabel">DeepSeek V4 Pro</span></div>
+      <div><strong>DeepSeek Harness</strong><span id="modelLabel">DeepSeek V4 Pro</span></div>
     </div>
     <div class="conversation-identity">
       <button id="history" class="icon-button history-button" title="所有对话">☰<i id="historyDot" class="unread-dot" hidden></i></button>
@@ -874,25 +1167,98 @@ class DeepSeekChatController {
     </div>
     <div class="top-actions">
       <span id="status" class="status connecting"><i></i><span>正在连接</span></span>
-      <select id="thoughtDisplay" class="compact-select" title="思考内容显示方式">
-        <option value="expanded">思考：展开</option>
-        <option value="collapsed">思考：折叠</option>
-        <option value="hidden">思考：隐藏</option>
-      </select>
       <button id="newSession" class="icon-button" title="新建对话">＋</button>
-      <button id="settings" class="icon-button" title="设置">⚙</button>
+      <button id="settings" class="icon-button" title="设置与管理" aria-expanded="false">⚙</button>
     </div>
   </header>
   <aside id="sessionPanel" class="session-panel" hidden>
-    <div class="session-panel-header"><strong>所有对话</strong><div><button id="clearHistory" class="text-button" title="删除所有本地对话记录">清空</button><button id="closeHistory" class="icon-button" title="关闭">×</button></div></div>
+    <div class="session-panel-header"><strong>所有对话</strong><div><button id="closeHistory" class="icon-button" title="关闭">×</button></div></div>
     <div id="sessionList" class="session-list"></div>
   </aside>
+  <div id="settingsOverlay" class="settings-overlay" hidden>
+    <section id="settingsPanel" class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <header class="settings-panel-header">
+        <div><strong id="settingsTitle">设置与管理</strong><span>DeepSeek Harness 运行环境</span></div>
+        <button id="closeSettings" class="icon-button" type="button" title="关闭">×</button>
+      </header>
+      <div class="settings-panel-body">
+        <section class="management-section">
+          <h2>当前运行</h2>
+          <div class="management-grid">
+            <div><span>连接状态</span><strong id="managementStatus">正在连接</strong></div>
+            <div><span>扩展版本</span><strong id="managementVersion">—</strong></div>
+            <div><span>Harness 配置</span><strong id="managementPreset">Current Cordis configuration</strong></div>
+            <div><span>推理强度</span><strong id="managementReasoning">由 Harness 配置决定</strong></div>
+            <div><span>模型</span><strong id="managementModel">DeepSeek V4 Pro</strong></div>
+            <div><span>API 凭据</span><strong id="managementCredentials">检查中</strong></div>
+          </div>
+          <p class="settings-note">Harness 配置与权限审核是两套独立设置；此处显示当前 Cordis 配置，不替代 Harness 自身的配置管理。</p>
+        </section>
+        <section class="management-section">
+          <h2>对话显示与安全</h2>
+          <label class="management-field"><span>工具审核</span><select id="approvalMode" class="approval-select" title="工具审核方式">
+            <option value="manual">全部手动审核</option>
+            <option value="sandbox">沙盒内自动，越界询问</option>
+            <option value="full-access">全部放行（超危险！）</option>
+          </select></label>
+          <label class="management-field"><span>安全读取自动批准</span><input id="autoAllowRead" class="management-checkbox" type="checkbox"><small>仅手动模式；限制在工作区内并排除密钥文件</small></label>
+          <label class="management-field"><span>思考内容</span><select id="thoughtDisplay" class="approval-select" title="思考内容显示方式">
+            <option value="expanded">默认展开</option>
+            <option value="collapsed">默认折叠</option>
+            <option value="hidden">隐藏</option>
+          </select></label>
+        </section>
+        <section class="management-section">
+          <h2>路径与存储</h2>
+          <dl class="management-paths">
+            <div><dt>工作目录</dt><dd id="managementCwd">—</dd></div>
+            <div><dt>Harness</dt><dd id="managementHarnessRoot">—</dd></div>
+            <div><dt>配置目录</dt><dd id="managementConfigRoot">—</dd></div>
+            <div><dt>Node</dt><dd id="managementNodePath">—</dd></div>
+            <div><dt>会话记录</dt><dd id="managementSessionRoot">—</dd></div>
+          </dl>
+          <button id="openAdvancedSettings" class="management-button" type="button">在 VS Code 中编辑路径设置</button>
+        </section>
+        <section class="management-section">
+          <div class="management-section-heading"><h2>Harness 插件</h2><span id="pluginSummary" class="settings-note">正在读取 Cordis 配置…</span></div>
+          <p class="settings-note">核心组件保持锁定；以下开关会按依赖关系成组修改下一次运行时的组件目录。外部代码的安装与删除暂不自动执行。</p>
+          <div id="featureGroupList" class="feature-group-list"></div>
+          <details class="plugin-inventory-details">
+            <summary>查看 Cordis 组件清单</summary>
+            <div id="pluginInventory" class="plugin-inventory"></div>
+            <div id="localPluginFiles" class="local-plugin-files"></div>
+          </details>
+          <div class="management-actions horizontal plugin-path-actions">
+            <button id="openCordisConfig" class="management-button" type="button">打开 cordis.yml</button>
+            <button id="openPluginDirectory" class="management-button" type="button">打开本地插件目录</button>
+          </div>
+        </section>
+        <section class="management-section">
+          <h2>对话整理</h2>
+          <div class="management-actions">
+            <button id="compact" class="management-button" type="button" title="压缩较早的对话上下文（可能调用摘要模型并产生费用）">Compact 当前对话</button>
+            <button id="clearConversation" class="management-button" type="button" title="清空当前显示和 Harness 上下文，开始同一对话槽中的新会话">/clear 当前对话</button>
+            <button id="clearHistory" class="management-button danger-management-button" type="button" title="删除插件保存的所有本地对话记录">清空全部本地记录</button>
+          </div>
+        </section>
+        <section class="management-section">
+          <div class="management-section-heading"><h2>诊断</h2><button id="refreshDiagnostics" class="text-button" type="button">重新检查</button></div>
+          <div id="diagnosticList" class="diagnostic-list"><span class="settings-note">打开设置时自动检查。</span></div>
+          <div class="management-actions horizontal">
+            <button id="openLogs" class="management-button" type="button">打开 Harness 日志</button>
+            <button id="copyDiagnostics" class="management-button" type="button">复制脱敏诊断</button>
+            <button id="restartRuntime" class="management-button warning-management-button" type="button">重启 Harness</button>
+          </div>
+        </section>
+      </div>
+    </section>
+  </div>
   <div id="workspaceBar" class="workspace-bar"></div>
   <section id="sessionControls" class="session-controls" hidden></section>
   <main id="conversation" aria-live="polite">
     <section id="welcome" class="welcome">
       <div class="welcome-mark">DS</div>
-      <h1>RRMA DeepseekHarness</h1>
+      <h1>DeepSeek Harness</h1>
       <p>通过 ACP 在当前 VS Code 工作区中协作。</p>
     </section>
   </main>
@@ -915,17 +1281,12 @@ class DeepSeekChatController {
               <div class="usage-cost-total"><dt>Estimated cost</dt><dd id="usageCost">¥0.000000</dd></div>
             </dl>
             <p id="usageCostBreakdown"></p>
-            <div class="usage-panel-actions">
-              <button id="compact" class="compact-button" type="button" title="压缩较早的对话上下文（可能调用摘要模型并产生费用）">Compact 对话</button>
-            </div>
             <p>仅在打开这里时显示费用。按当前官方 V4 Pro 单价估算：缓存命中 ¥0.025/M、未命中 ¥3/M、输出 ¥6/M；实际账单以 DeepSeek 为准。</p>
           </section>
         </div>
-        <select id="approvalMode" class="approval-select" title="工具审核方式">
-          <option value="manual">全部手动审核</option>
-          <option value="sandbox">沙盒内自动，越界询问</option>
-          <option value="full-access">全部放行（超危险！）</option>
-        </select>
+        <div class="composer-settings-wrap">
+          <button id="composerSettings" class="icon-button composer-settings-button" type="button" title="设置" aria-expanded="false">⚙</button>
+        </div>
         <button id="cancel" class="cancel-button" title="停止" hidden>■</button>
         <button id="send" class="send-button" title="发送">↑</button>
       </div>
@@ -938,7 +1299,7 @@ class DeepSeekChatController {
 }
 
 function activate(context) {
-  const output = vscode.window.createOutputChannel('RRMA DeepseekHarness');
+  const output = vscode.window.createOutputChannel('DeepSeek Harness');
   const diffProvider = new DiffContentProvider();
   const controller = new DeepSeekChatController(context, output, diffProvider);
   const openChat = () => controller.open();

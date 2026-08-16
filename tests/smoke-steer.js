@@ -38,7 +38,7 @@ async function main() {
   const session = await transport.request('session/new', { cwd, mcpServers: [] });
   let idleError;
   try {
-    await transport.request('rrma.dev/session/steer', { sessionId: session.sessionId, text: '继续当前任务' });
+    await transport.request('deepseek-harness-vscode/session/steer', { sessionId: session.sessionId, text: '继续当前任务' });
   } catch (error) {
     idleError = error;
   }

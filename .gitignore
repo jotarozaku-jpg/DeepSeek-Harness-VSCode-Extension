@@ -6,7 +6,6 @@ dist/
 .dsh/
 .deepseek-harness/
 .deepseek-harness-vscode/
-.rrma-deepseek-harness/
 .sessions/
 .env
 .env.*

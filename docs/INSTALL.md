@@ -39,8 +39,6 @@ Create the machine-local credential file:
 ```powershell
 $configRoot = if (Test-Path "$env:USERPROFILE\.deepseek-harness-vscode") {
   "$env:USERPROFILE\.deepseek-harness-vscode"
-} elseif (Test-Path "$env:USERPROFILE\.rrma-deepseek-harness") {
-  "$env:USERPROFILE\.rrma-deepseek-harness"
 } else {
   throw "Configuration directory not found. Run adapter\setup.ps1 first."
 }
@@ -64,12 +62,12 @@ Package and install the extension:
 ```powershell
 npm.cmd run check
 npm.cmd run package
-code --install-extension .\dist\rrma-deepseek-harness.vsix
+code --install-extension .\dist\deepseek-harness-vscode.vsix
 ```
 
-Reload VS Code, open a trusted workspace, and run `RRMA DeepseekHarness: Open Chat`.
+Reload VS Code, open a trusted workspace, and run `DeepSeek Harness: Open Chat`.
 
-重新加载 VS Code，打开可信任的工作区，然后运行 `RRMA DeepseekHarness: Open Chat`。
+重新加载 VS Code，打开可信任的工作区，然后运行 `DeepSeek Harness: Open Chat`。
 
 If the external runtime or machine-local configuration is missing, the extension links back to this guide. It does not download or modify Harness automatically.
 
@@ -85,6 +83,6 @@ The defaults are:
 
 Override them with `deepseekHarness.harnessRoot`, `deepseekHarness.configRoot`, or the corresponding setup environment variables when needed.
 
-For compatibility, an existing `%USERPROFILE%\.rrma-deepseek-harness` is still used when the new configuration directory does not exist. New installations use `%USERPROFILE%\.deepseek-harness-vscode`.
+The repository never stores credentials, sessions, skills, personas, or machine-specific settings.
 
-为兼容早期安装，当新配置目录不存在时，扩展仍会使用已有的 `%USERPROFILE%\.rrma-deepseek-harness`。全新安装会使用 `%USERPROFILE%\.deepseek-harness-vscode`。
+本仓库不会保存凭据、会话、Skills、人格文件或机器专属设置。

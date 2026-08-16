@@ -17,7 +17,7 @@ process.env.DSH_HARNESS_ROOT = harnessRoot
 process.env.DSH_PERMISSION_MODE = 'workspace-write'
 
 const { boot } = await import(pathToFileURL(bootPath).href)
-const ctx = await boot('rrma-deepseek-harness-git-smoke', runtimeConfig, undefined, undefined, pathToFileURL(moduleAnchor).href)
+const ctx = await boot('deepseek-harness-vscode-git-smoke', runtimeConfig, undefined, undefined, pathToFileURL(moduleAnchor).href)
 try {
   const shell = ctx.get('shell')
   if (!shell) throw new Error('PowerShell executor service was not mounted.')

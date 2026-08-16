@@ -100,7 +100,7 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
 -  // Emit only committed assistant text. Raw chunks, reasoning, tools, plans,
 -  // titles, and retry markers are presentation or trace data and stay off the
 -  // automation wire.
-+  // RRMA rich-client bridge: retain committed assistant text while also exposing
++  // VS Code rich-client bridge: retain committed assistant text while also exposing
 +  // model-provided reasoning and the Harness tool lifecycle over standard ACP updates.
    ctx.on('session/event', (session, event: SessionEvent) => {
      const record = sessions.get(session.header.id)
@@ -131,7 +131,7 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
 +            used: 0,
 +            size: 0,
 +            _meta: {
-+              rrmaUsage: {
++              clientUsage: {
 +                inputTokens,
 +                uncachedInputTokens: usage.inputTokens,
 +                outputTokens: usage.outputTokens,

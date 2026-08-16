@@ -1,10 +1,10 @@
 {
-  "name": "rrma-deepseek-harness",
-  "displayName": "RRMA DeepseekHarness",
+  "name": "deepseek-harness-vscode",
+  "displayName": "DeepSeek Harness for VS Code",
   "description": "An unofficial VS Code client for DeepSeek Harness over ACP.",
-  "version": "0.6.0",
-  "publisher": "rrma",
-  "license": "SEE LICENSE IN LICENSE",
+  "version": "0.6.1",
+  "publisher": "community",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/jotarozaku-jpg/DeepSeek-Harness-VSCode-Extension.git"
@@ -35,27 +35,27 @@
     "commands": [
       {
         "command": "deepseekHarness.openChat",
-        "title": "RRMA DeepseekHarness: Open Chat",
+        "title": "DeepSeek Harness: Open Chat",
         "icon": { "light": "media/icon.svg", "dark": "media/icon.svg" }
       },
       {
         "command": "deepseekHarness.newConversation",
-        "title": "RRMA DeepseekHarness: New Conversation",
+        "title": "DeepSeek Harness: New Conversation",
         "icon": "$(add)"
       },
       {
         "command": "deepseekHarness.cancelTurn",
-        "title": "RRMA DeepseekHarness: Cancel Turn",
+        "title": "DeepSeek Harness: Cancel Turn",
         "icon": "$(debug-stop)"
       },
       {
         "command": "deepseekHarness.sendSelection",
-        "title": "RRMA DeepseekHarness: Send Selection",
+        "title": "DeepSeek Harness: Send Selection",
         "icon": "$(send)"
       },
       {
         "command": "deepseekHarness.openInstallGuide",
-        "title": "RRMA DeepseekHarness: Open Installation Guide",
+        "title": "DeepSeek Harness: Open Installation Guide",
         "icon": "$(book)"
       }
     ],
@@ -90,13 +90,13 @@
       }
     ],
     "configuration": {
-      "title": "RRMA DeepseekHarness",
+      "title": "DeepSeek Harness",
       "properties": {
         "deepseekHarness.configRoot": {
           "type": "string",
           "default": "",
           "scope": "machine",
-          "description": "Machine-local configuration directory. Empty uses ~/.deepseek-harness-vscode (with fallback to the legacy ~/.rrma-deepseek-harness when it already exists)."
+          "description": "Machine-local configuration directory. Empty uses ~/.deepseek-harness-vscode."
         },
         "deepseekHarness.harnessRoot": {
           "type": "string",
@@ -141,6 +141,17 @@
           "scope": "machine",
           "description": "Low-risk tools that may bypass prompts in manual mode. Only workspace-scoped read is supported; secrets and protected paths remain blocked."
         },
+        "deepseekHarness.disabledFeatureGroups": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["skills", "subagents", "workflows", "todo", "compaction"]
+          },
+          "uniqueItems": true,
+          "default": [],
+          "scope": "machine",
+          "description": "Optional Harness feature groups disabled from the settings and management panel. Core Cordis components cannot be disabled here; changes restart Harness."
+        },
         "deepseekHarness.thoughtDisplay": {
           "type": "string",
           "enum": ["expanded", "collapsed", "hidden"],
@@ -156,11 +167,12 @@
     }
   },
   "scripts": {
-    "check": "node --check extension.js && node --check src/acpTransport.js && node --check src/security.js && node --check media/main.js && node --check adapter/acp-bridge.mjs",
+    "check": "node --check extension.js && node --check src/acpTransport.js && node --check src/security.js && node --check media/main.js && node --check adapter/acp-bridge.mjs && node --check adapter/runtime-feature-filter.mjs",
     "smoke:approval": "node tests/smoke-approval-mode.mjs",
     "smoke:auto-approval": "node tests/smoke-auto-approval.mjs",
     "smoke:security": "node tests/smoke-security.js",
+    "smoke:feature-groups": "node tests/smoke-feature-groups.mjs",
     "prepackage": "node scripts/prepare-package.js",
-    "package": "npx --yes @vscode/vsce@latest package --out dist/rrma-deepseek-harness.vsix"
+    "package": "npx --yes @vscode/vsce@latest package --out dist/deepseek-harness-vscode.vsix"
   }
 }

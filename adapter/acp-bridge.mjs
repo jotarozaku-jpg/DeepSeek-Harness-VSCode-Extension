@@ -4,18 +4,15 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { filterCordisPlugins, parseDisabledPluginIds } from './runtime-feature-filter.mjs'
 
-const name = 'rrma-deepseek-harness'
+const name = 'deepseek-harness-vscode'
 process.title = name
 const harnessRoot = process.env.DSH_HARNESS_ROOT
 const requestedConfig = process.env.DSH_CORDIS_CONFIG
 const defaultConfigRoot = join(homedir(), '.deepseek-harness-vscode')
-const legacyConfigRoot = join(homedir(), '.rrma-deepseek-harness')
-const fallbackConfigRoot = existsSync(defaultConfigRoot)
-  ? defaultConfigRoot
-  : existsSync(legacyConfigRoot) ? legacyConfigRoot : defaultConfigRoot
 const configuredHome = process.env.DSH_HOME?.trim()
-const configRoot = resolve(configuredHome || fallbackConfigRoot)
+const configRoot = resolve(configuredHome || defaultConfigRoot)
 
 if (!harnessRoot) throw new Error('DSH_HARNESS_ROOT is required.')
 if (!requestedConfig) throw new Error('DSH_CORDIS_CONFIG is required.')
@@ -30,6 +27,7 @@ const moduleAnchorPath = join(harnessRoot, 'examples', 'acp-agent', 'cordis.yml'
 const pwshSandboxPath = join(harnessRoot, 'packages', 'shell', 'pwsh-sandbox', 'lib', 'index.js')
 const shellEnvPath = join(harnessRoot, 'packages', 'shell', 'shell-env', 'lib', 'index.js')
 const toolPwshPath = join(harnessRoot, 'packages', 'shell', 'tool-pwsh', 'lib', 'index.js')
+const approvalPluginPath = join(dirname(configPath), 'plugins', 'approval-all-tools.mjs')
 
 if (!existsSync(configPath)) throw new Error(`Cordis config not found: ${configPath}`)
 if (!existsSync(appBootPath)) throw new Error(`Harness app boot not found: ${appBootPath}`)
@@ -38,16 +36,19 @@ if (!existsSync(moduleAnchorPath)) throw new Error(`Harness ACP module anchor no
 if (!existsSync(pwshSandboxPath) || !existsSync(shellEnvPath) || !existsSync(toolPwshPath)) {
   throw new Error('Harness PowerShell packages are not built. Run setup.ps1 first.')
 }
+if (!existsSync(approvalPluginPath)) throw new Error(`Approval plugin not found: ${approvalPluginPath}`)
 
 // These Windows-only packages are not dependencies of the stock ACP example.
 // Materialize a gitignored runtime config with exact module URLs; the tracked
 // template remains portable and a workspace cannot replace these paths.
 mkdirSync(configRoot, { recursive: true })
 const persona = existsSync(personaPath) ? readFileSync(personaPath, 'utf8') : ''
-const runtimeConfig = readFileSync(configPath, 'utf8')
+const disabledPluginIds = parseDisabledPluginIds(process.env.DSH_DISABLED_PLUGIN_IDS)
+const runtimeConfig = filterCordisPlugins(readFileSync(configPath, 'utf8'), disabledPluginIds)
   .replace('__DSH_PWSH_SANDBOX_PLUGIN__', () => JSON.stringify(pathToFileURL(pwshSandboxPath).href))
   .replace('__DSH_SHELL_ENV_PLUGIN__', () => JSON.stringify(pathToFileURL(shellEnvPath).href))
   .replace('__DSH_TOOL_PWSH_PLUGIN__', () => JSON.stringify(pathToFileURL(toolPwshPath).href))
+  .replace('__DSH_APPROVAL_PLUGIN__', () => JSON.stringify(pathToFileURL(approvalPluginPath).href))
   .replace('__DSH_SESSION_ROOT__', () => JSON.stringify(sessionRoot))
   .replace('__DSH_PERSONA__', () => JSON.stringify(persona))
 // POSIX mode is best-effort only on Windows. This runtime file must never
@@ -59,8 +60,8 @@ const { boot, installFailLoud, loadEnv } = await import(pathToFileURL(appBootPat
 installFailLoud(name)
 loadEnv(name)
 
-// Bare Harness packages resolve from the installed ACP host. Relative plugin
-// paths still resolve beside this extension's Cordis configuration.
+// Bare Harness packages resolve from the installed ACP host. Local plugin
+// paths are materialized above as verified absolute file URLs.
 const bareModuleBaseUrl = pathToFileURL(moduleAnchorPath).href
 const ctx = await boot(name, runtimeConfigPath, undefined, undefined, bareModuleBaseUrl)
 let exiting = false

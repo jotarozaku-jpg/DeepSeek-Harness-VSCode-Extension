@@ -3,4 +3,4 @@
 tests/**
 dist/**
 *.vsix
-
+*.log

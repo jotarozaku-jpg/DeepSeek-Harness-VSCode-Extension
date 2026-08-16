@@ -7,13 +7,8 @@ $harnessRoot = if ($env:DSH_HARNESS_ROOT) {
     Join-Path $env:USERPROFILE '.deepseek-harness'
 }
 $defaultConfigRoot = Join-Path $env:USERPROFILE '.deepseek-harness-vscode'
-$legacyConfigRoot = Join-Path $env:USERPROFILE '.rrma-deepseek-harness'
 $configRoot = if ($env:DSH_HOME) {
     $env:DSH_HOME
-} elseif (Test-Path -LiteralPath $defaultConfigRoot) {
-    $defaultConfigRoot
-} elseif (Test-Path -LiteralPath $legacyConfigRoot) {
-    $legacyConfigRoot
 } else {
     $defaultConfigRoot
 }
@@ -61,9 +56,9 @@ if ($resolvedCommit -ne $pinnedCommit) { throw 'Pinned Harness commit could not 
 git -C $harnessRoot switch --detach $pinnedCommit
 if ($LASTEXITCODE -ne 0) { throw 'git switch failed.' }
 foreach ($acpPatch in $acpPatches) {
-    git -C $harnessRoot apply --check $acpPatch
+    git -C $harnessRoot apply --check --ignore-space-change --ignore-whitespace $acpPatch
     if ($LASTEXITCODE -ne 0) { throw "ACP compatibility patch does not apply: $acpPatch" }
-    git -C $harnessRoot apply $acpPatch
+    git -C $harnessRoot apply --ignore-space-change --ignore-whitespace $acpPatch
     if ($LASTEXITCODE -ne 0) { throw "Applying the ACP compatibility patch failed: $acpPatch" }
 }
 
@@ -77,7 +72,7 @@ try {
     Pop-Location
     [array]::Reverse($acpPatches)
     foreach ($acpPatch in $acpPatches) {
-        git -C $harnessRoot apply --reverse $acpPatch
+        git -C $harnessRoot apply --reverse --ignore-space-change --ignore-whitespace $acpPatch
         if ($LASTEXITCODE -ne 0) { Write-Warning "Could not remove temporary ACP source patch: $acpPatch" }
     }
 }

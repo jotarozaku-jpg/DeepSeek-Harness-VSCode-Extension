@@ -42,7 +42,7 @@
     policy: ask
 
 - id: approval-all-tools
-  name: ./plugins/approval-all-tools.mjs
+  name: __DSH_APPROVAL_PLUGIN__
 
 - id: skill
   name: '@deepseek-ai/dsh-skill'

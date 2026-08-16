@@ -22,7 +22,7 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
    drainContinuableDescendants(parents: readonly Agent[]): Promise<void>
  }
  
-+/** Optional compaction seam used by the RRMA Compact button. */
++/** Optional compaction seam used by the VS Code client Compact button. */
 +interface ManualCompaction {
 +  compactNow(
 +    agent: Agent,
@@ -42,7 +42,7 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
    let conn: AgentSideConnection
  
 @@ -242,6 +251,7 @@ export function apply(ctx: Context, config: AcpConfig): void {
-           agentInfo: { name: 'RRMA_deepseek', version: '0.0.1' },
+           agentInfo: { name: 'deepseek-harness-acp', version: '0.0.1' },
            agentCapabilities: {
              promptCapabilities: { image: false, audio: false, embeddedContext: false },
 +            sessionCapabilities: { resume: {} },
@@ -106,7 +106,7 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
 +                sessionId: record.agent.session.id,
 +                update: {
 +                  sessionUpdate: 'usage_update', used: 0, size: 0,
-+                  _meta: { rrmaUsage: {
++                  _meta: { clientUsage: {
 +                    inputTokens: usage.inputTokens + cacheReadTokens + cacheWriteTokens,
 +                    uncachedInputTokens: usage.inputTokens,
 +                    outputTokens: usage.outputTokens,

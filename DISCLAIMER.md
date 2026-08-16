@@ -1,6 +1,6 @@
 # 免责声明
 
-RRMA DeepseekHarness 是作者以 vibecoding 方式制作和维护的个人工具，并按“现状”提供。
+DeepSeek Harness for VS Code 是一个以 vibecoding 方式制作和维护的非官方个人项目，并按“现状”提供。
 
 作者不保证本扩展正确、安全、稳定、持续可用或适合任何特定目的。使用者应自行审核源代码、工具权限、沙盒边界、API 请求与费用、凭据保存方式，以及文件和网络操作可能带来的风险。
 
@@ -8,7 +8,7 @@ RRMA DeepseekHarness 是作者以 vibecoding 方式制作和维护的个人工�
 
 ## English
 
-RRMA DeepseekHarness is a personal tool created and maintained through vibecoding and provided as-is.
+DeepSeek Harness for VS Code is an unofficial personal project created and maintained through vibecoding and provided as-is.
 
 The author does not warrant that the extension is correct, secure, stable, continuously available, or fit for any particular purpose. Users are responsible for reviewing the source, tool permissions, sandbox boundaries, API requests and charges, credential storage, and the risks of file or network operations.
 

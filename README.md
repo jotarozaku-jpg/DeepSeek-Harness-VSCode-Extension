@@ -6,6 +6,19 @@
 
 > 状态：早期预览。DeepSeek Harness 本身仍处于开发者预览阶段；在上游 ACP 入口趋于稳定之前，本扩展暂时使用固定版本的小型兼容适配层。
 
+## 0.6.1 更新
+
+- 把权限模式、思考显示、Compact、`/clear`、运行路径和诊断统一到“设置与管理”窗口
+- 停止任务现在区分“已请求停止”“尚未确认”和“已确认停止”，避免只显示模糊的“停止中”
+- 思考过程中追加的引导会作为带“引导”标记的独立消息显示
+- 改进流式输出时的滚动跟随：手动向上阅读后不再强制拉到底部，主动跟随时则保持真正贴底
+- 新增 Harness 功能组管理，可开关 Skills、Subagent、Workflow / Ralph、Todo 和上下文压缩；核心 Cordis 组件保持锁定
+- 新增日志入口、运行环境检查、脱敏诊断复制与 Harness 重启
+
+功能组开关只控制仓库随附 Cordis 配置中已经存在的组件，不会自动下载或删除外部插件代码。
+
+从 0.6.0 更新时请重新运行 `adapter\setup.ps1`，让固定版本的外部 Harness 重新构建本版兼容接口；脚本不会覆盖已有的 `.credentials.yaml`。
+
 ## 功能
 
 - 在编辑器标签页中提供完整聊天界面
@@ -15,6 +28,8 @@
 - 持久化对话列表、重命名、恢复对话和未读红点
 - 原生 diff 与工作区文件引用
 - 打断、引导和 Compact
+- 统一的设置与管理窗口、`/clear` 与明确的停止确认状态
+- Harness 可选功能组、日志、诊断和运行时重启
 - Input、Output 与缓存 Token 估算
 
 ## ACP 是什么，以及本项目如何使用它
@@ -57,6 +72,7 @@ npm.cmd run check
 npm.cmd run smoke:approval
 npm.cmd run smoke:auto-approval
 npm.cmd run smoke:security
+npm.cmd run smoke:feature-groups
 npm.cmd run package
 ```
 
@@ -84,6 +100,19 @@ This is a standalone Visual Studio Code extension that communicates with an exte
 
 > Status: early preview. DeepSeek Harness itself is currently a developer preview, and this extension uses a pinned compatibility adapter while the upstream ACP entry point is still evolving.
 
+### What is new in 0.6.1
+
+- Approval modes, thought display, Compact, `/clear`, runtime paths and diagnostics now live in one Settings and Management dialog
+- Stop requests distinguish requested, unconfirmed and confirmed states
+- Steering messages sent during an active turn are rendered as separate labelled messages
+- Streaming scroll-follow respects manual reading and reliably pins to the true bottom when follow mode is active
+- Harness feature groups can toggle Skills, Subagents, Workflow / Ralph, Todo and compaction while core Cordis components remain locked
+- Added log access, runtime checks, sanitized diagnostic copying and Harness restart controls
+
+Feature-group switches only control components already present in the bundled Cordis configuration. They never download or remove external plugin code.
+
+When updating from 0.6.0, rerun `adapter\setup.ps1` so the pinned external Harness is rebuilt with this version's compatibility interface. The script does not overwrite an existing `.credentials.yaml`.
+
 ### Features
 
 - Full editor-tab chat UI
@@ -93,6 +122,8 @@ This is a standalone Visual Studio Code extension that communicates with an exte
 - Persistent conversation list, rename, resume and unread indicators
 - Native diffs and workspace file references
 - Interrupt, steer and compact controls
+- Unified settings and management, `/clear`, and explicit stop confirmation states
+- Optional Harness feature groups, logs, diagnostics and runtime restart
 - Input, output and cache-token estimates
 
 ### What ACP is and how this project uses it
@@ -135,6 +166,7 @@ npm.cmd run check
 npm.cmd run smoke:approval
 npm.cmd run smoke:auto-approval
 npm.cmd run smoke:security
+npm.cmd run smoke:feature-groups
 npm.cmd run package
 ```
 

@@ -6,7 +6,7 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
        },
  
 +      async extMethod(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
-+        if (method !== 'rrma.dev/session/steer') throw RequestError.methodNotFound(method)
++        if (method !== 'deepseek-harness-vscode/session/steer') throw RequestError.methodNotFound(method)
 +        assertOpen()
 +        const sessionId = params.sessionId
 +        const text = params.text

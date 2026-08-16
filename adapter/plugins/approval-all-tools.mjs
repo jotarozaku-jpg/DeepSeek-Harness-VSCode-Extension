@@ -6,7 +6,7 @@ import { basename, isAbsolute, relative, resolve } from 'node:path'
  * machine-scoped allowlist explicitly permits a safe workspace-local read.
  * Grants never change sandbox boundaries.
  */
-export const name = 'rrma-approval-all-tools'
+export const name = 'deepseek-harness-vscode-approval-all-tools'
 export const inject = ['tools', 'approval']
 
 const configuredAutoAllow = new Set(parseAutoAllow(process.env.DSH_AUTO_ALLOW_TOOLS))
@@ -32,7 +32,6 @@ function isSensitive(relativePath) {
   const segments = normalized.split('/')
   return segments.includes('.deepseek')
     || segments.includes('.deepseek-harness-vscode')
-    || segments.includes('.rrma-deepseek-harness')
     || segments.includes('.dsh')
     || segments.includes('.git')
     || leaf === '.env'
