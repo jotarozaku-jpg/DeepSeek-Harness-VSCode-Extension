@@ -6,21 +6,50 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { AcpTransport } = require('./src/acpTransport');
-const { normalizeApprovalMode, normalizeAutoAllowTools, redactSecrets, SecretRedactingBuffer } = require('./src/security');
+const { normalizeApprovalMode, normalizeAutoAllowTools, isSensitiveWorkspacePath, redactSecrets, SecretRedactingBuffer } = require('./src/security');
+const { normalizeLocale, translate } = require('./media/i18n');
 
 const TURN_STALL_MS = 90_000;
 const CANCEL_ESCALATION_MS = 6_000;
 const MAX_DIFF_TEXT_BYTES = 2 * 1024 * 1024;
 const DEFAULT_CONFIG_ROOT = path.join(os.homedir(), '.deepseek-harness-vscode');
-
 const OPTIONAL_FEATURE_GROUPS = Object.freeze([
-  { id: 'skills', label: 'Skills', description: '发现并调用配置目录中的自定义 Skills。', pluginIds: ['skill', 'skill-filesystem', 'tool-skill'] },
-  { id: 'subagents', label: 'Subagent', description: '允许主 Agent 创建、派生和管理子 Agent。', pluginIds: ['subagent', 'subagent-spawn-in-process', 'subagent-fork-in-process', 'tool-subagent-control', 'tool-subagent-list-agents', 'tool-subagent-report', 'tool-subagent', 'tool-subagent-fork'] },
-  { id: 'workflows', label: 'Workflow / Ralph', description: '启用工作流执行器和 Ralph 长任务循环。', pluginIds: ['workflow-worker-thread', 'tool-workflow', 'tool-ralph'] },
-  { id: 'todo', label: 'Todo 与重复提醒', description: '启用任务列表工具和重复调用提醒。', pluginIds: ['tool-todo', 'repeat-tool-reminder'] },
-  { id: 'compaction', label: '上下文压缩', description: '启用 Harness 上下文压缩和 Compact 功能。', pluginIds: ['compaction-basic'] },
+  {
+    id: 'skills',
+    label: 'Skills',
+    description: '发现并调用配置目录中的自定义 Skills。',
+    pluginIds: ['skill', 'skill-filesystem', 'tool-skill'],
+  },
+  {
+    id: 'subagents',
+    label: 'Subagent',
+    description: '允许主 Agent 创建、派生和管理子 Agent。',
+    pluginIds: ['subagent', 'subagent-spawn-in-process', 'subagent-fork-in-process', 'tool-subagent-control', 'tool-subagent-list-agents', 'tool-subagent-report', 'tool-subagent', 'tool-subagent-fork'],
+  },
+  {
+    id: 'workflows',
+    label: 'Workflow / Ralph',
+    description: '启用工作流执行器和 Ralph 长任务循环。',
+    pluginIds: ['workflow-worker-thread', 'tool-workflow', 'tool-ralph'],
+  },
+  {
+    id: 'todo',
+    label: 'Todo 与重复提醒',
+    description: '启用任务列表工具和重复调用提醒。',
+    pluginIds: ['tool-todo', 'repeat-tool-reminder'],
+  },
+  {
+    id: 'compaction',
+    label: '上下文压缩',
+    description: '启用 Harness 上下文压缩和 Compact 功能。',
+    pluginIds: ['compaction-basic'],
+  },
 ]);
 const FEATURE_GROUP_IDS = new Set(OPTIONAL_FEATURE_GROUPS.map((item) => item.id));
+
+function resolveDefaultConfigRoot() {
+  return DEFAULT_CONFIG_ROOT;
+}
 
 function normalizeDisabledFeatureGroups(value) {
   return [...new Set((Array.isArray(value) ? value : []).filter((item) => FEATURE_GROUP_IDS.has(item)))];
@@ -55,10 +84,6 @@ function configuredCordisPlugins(configRoot, disabledGroups = []) {
   return plugins;
 }
 
-function resolveDefaultConfigRoot() {
-  return DEFAULT_CONFIG_ROOT;
-}
-
 class DiffContentProvider {
   constructor() {
     this.documents = new Map();
@@ -81,6 +106,8 @@ const MAX_CONVERSATIONS = 50;
 const MAX_ENTRIES_PER_CONVERSATION = 500;
 const MAX_ENTRY_BYTES = 128 * 1024;
 const MAX_STATE_BYTES = 8 * 1024 * 1024;
+const MAX_TOOL_CALL_CACHE = 100;
+const MAX_TOOL_CALL_FIELD_BYTES = 32 * 1024;
 
 function boundedString(value, fallback = '', max = 256) {
   return typeof value === 'string' ? value.slice(0, max) : fallback;
@@ -95,6 +122,38 @@ function safeEntry(value) {
   } catch {
     return undefined;
   }
+}
+
+function boundedToolCallField(value) {
+  if (typeof value === 'string') {
+    const encoded = Buffer.from(value, 'utf8');
+    return encoded.length <= MAX_TOOL_CALL_FIELD_BYTES
+      ? value
+      : `${encoded.subarray(0, MAX_TOOL_CALL_FIELD_BYTES).toString('utf8')}\n[truncated]`;
+  }
+  try {
+    const serialized = JSON.stringify(value);
+    if (Buffer.byteLength(serialized, 'utf8') <= MAX_TOOL_CALL_FIELD_BYTES) return JSON.parse(serialized);
+    return {
+      truncated: true,
+      originalBytes: Buffer.byteLength(serialized, 'utf8'),
+      preview: serialized.slice(0, MAX_TOOL_CALL_FIELD_BYTES),
+    };
+  } catch {
+    return '[unserializable tool field]';
+  }
+}
+
+function safeCachedToolCall(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const cached = {};
+  for (const key of ['toolCallId', 'title', 'kind', 'status']) {
+    if (source[key] !== undefined && source[key] !== null) cached[key] = boundedString(String(source[key]), '', 2048);
+  }
+  for (const key of ['content', 'rawInput', 'rawOutput', 'locations']) {
+    if (source[key] !== undefined && source[key] !== null) cached[key] = boundedToolCallField(source[key]);
+  }
+  return cached;
 }
 
 function safeUsage(value) {
@@ -112,6 +171,27 @@ function safeUsage(value) {
   };
 }
 
+function safeContextUsage(value) {
+  const used = Number(value?.used);
+  const size = Number(value?.size);
+  return {
+    used: Number.isFinite(used) && used >= 0 ? Math.floor(used) : 0,
+    size: Number.isFinite(size) && size > 0 ? Math.floor(size) : 0,
+  };
+}
+
+function safePerformance(value) {
+  const positive = (candidate) => {
+    const number = Number(candidate);
+    return Number.isFinite(number) && number >= 0 ? number : 0;
+  };
+  return {
+    ttftMs: positive(value?.ttftMs),
+    tokensPerSecond: positive(value?.tokensPerSecond),
+    durationMs: positive(value?.durationMs),
+  };
+}
+
 function optionValues(option) {
   const values = [];
   for (const item of Array.isArray(option?.options) ? option.options : []) {
@@ -124,6 +204,39 @@ function optionValues(option) {
     }
   }
   return values;
+}
+
+function sanitizeQuestions(value) {
+  const seen = new Set();
+  return (Array.isArray(value) ? value : []).slice(0, 3).flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const id = boundedString(item.id, '', 128);
+    const question = boundedString(item.question, '', 2000);
+    if (!id || !question || seen.has(id)) return [];
+    seen.add(id);
+    const options = (Array.isArray(item.options) ? item.options : []).slice(0, 20).flatMap((option) => {
+      if (!option || typeof option !== 'object') return [];
+      const label = boundedString(option.label, '', 160);
+      if (!label) return [];
+      const description = boundedString(option.description, '', 1000);
+      return [{ label, ...(description ? { description } : {}) }];
+    });
+    const header = boundedString(item.header, '', 160);
+    const detail = boundedString(item.detail, '', 64 * 1024);
+    const approve = boundedString(item.intent?.approve, '', 160);
+    const intent = item.intent?.kind === 'plan-review' && detail && approve && options.some((option) => option.label === approve)
+      ? { kind: 'plan-review', approve }
+      : undefined;
+    return [{
+      id,
+      question,
+      ...(header ? { header } : {}),
+      ...(detail ? { detail } : {}),
+      ...(options.length ? { options } : {}),
+      multiSelect: item.multiSelect === true,
+      ...(intent ? { intent } : {}),
+    }];
+  });
 }
 
 function sanitizeConversationState(value) {
@@ -143,11 +256,20 @@ function sanitizeConversationState(value) {
       title: boundedString(item.title, '新对话', 200) || '新对话',
       entries,
       unread: item.unread === true,
+      archived: item.archived === true,
       updatedAt: Number.isFinite(item.updatedAt) ? Number(item.updatedAt) : Date.now(),
       sessionId: boundedString(item.sessionId, '', 256) || undefined,
       runtimeId: boundedString(item.runtimeId, '', 256) || undefined,
       activeTurn: item.activeTurn === true,
       usage: safeUsage(item.usage),
+      usageByTier: {
+        peak: safeUsage(item.usageByTier?.peak),
+        offPeak: safeUsage(item.usageByTier?.offPeak),
+      },
+      pricingIncomplete: item.pricingIncomplete === true,
+      contextUsage: safeContextUsage(item.contextUsage),
+      performance: safePerformance(item.performance),
+      forkedFrom: boundedString(item.forkedFrom, '', 128) || undefined,
     }];
   }).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_CONVERSATIONS);
   const result = {
@@ -179,13 +301,18 @@ class DeepSeekChatController {
     this.toolCalls = new Map();
     this.webviewReady = false;
     this.pendingPermissions = new Map();
+    this.pendingQuestions = new Map();
+    this.queuedPrompts = new Map();
+    this.drainingQueues = new Set();
     this.turnActivityTimers = new Map();
     this.cancelEscalationTimers = new Map();
     this.stderrBuffer = undefined;
     this.sessionControls = new Map();
+    this.dashboardRequests = new Set();
     this.pendingInputText = '';
     this.cancelRequested = new Set();
     this.connectionState = 'disconnected';
+    this.uiLanguage = normalizeLocale(this.context.globalState.get('deepseekHarness.uiLanguage', 'zh-CN'));
     this.disposables = [];
   }
 
@@ -202,7 +329,8 @@ class DeepSeekChatController {
       vscode.ViewColumn.Active,
       {
         enableScripts: true,
-        retainContextWhenHidden: true,
+        // Webview state is persisted separately, so hidden tabs may release their DOM and renderer memory.
+        retainContextWhenHidden: false,
         localResourceRoots: [mediaRoot],
       },
     );
@@ -257,6 +385,15 @@ class DeepSeekChatController {
       case 'steer':
         await this.steerConversation(String(message.text || ''), String(message.conversationId || this.activeConversationId || ''));
         break;
+      case 'enqueuePrompt':
+        this.enqueuePrompt(String(message.text || ''), String(message.conversationId || this.activeConversationId || ''), boundedString(message.queueId, '', 128));
+        break;
+      case 'steerQueued':
+        await this.steerQueuedPrompts(String(message.text || ''), String(message.conversationId || this.activeConversationId || ''));
+        break;
+      case 'cancelQueuedPrompt':
+        this.cancelQueuedPrompt(String(message.conversationId || this.activeConversationId || ''), boundedString(message.queueId, '', 128));
+        break;
       case 'newSession':
         await this.switchConversation(String(message.conversationId || crypto.randomUUID()), true);
         break;
@@ -275,6 +412,9 @@ class DeepSeekChatController {
       case 'permissionResponse':
         this.resolvePermission(message.requestId, message.optionId);
         break;
+      case 'questionResponse':
+        this.resolveQuestion(message.requestId, message.answers);
+        break;
       case 'listFiles':
         await this.listWorkspaceFiles(String(message.query || ''), boundedString(message.requestId, '', 128));
         break;
@@ -286,6 +426,15 @@ class DeepSeekChatController {
         break;
       case 'setSessionConfigOption':
         await this.setSessionConfigOption(String(message.conversationId || ''), String(message.configId || ''), message.value);
+        break;
+      case 'refreshDashboard':
+        await this.refreshDashboard(String(message.conversationId || this.activeConversationId || ''));
+        break;
+      case 'goalAction':
+        await this.goalAction(String(message.conversationId || this.activeConversationId || ''), String(message.action || ''));
+        break;
+      case 'interruptSubagent':
+        await this.interruptSubagent(String(message.conversationId || this.activeConversationId || ''), String(message.subagentId || ''));
         break;
       case 'openSettings':
         await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:community.deepseek-harness-vscode');
@@ -320,6 +469,11 @@ class DeepSeekChatController {
       case 'setThoughtDisplay':
         await this.setThoughtDisplay(String(message.value || 'collapsed'));
         break;
+      case 'setUiLanguage':
+        this.uiLanguage = normalizeLocale(message.value);
+        await this.context.globalState.update('deepseekHarness.uiLanguage', this.uiLanguage);
+        this.post({ type: 'uiLanguageChanged', value: this.uiLanguage });
+        break;
       case 'saveState':
         await this.context.globalState.update('deepseekHarness.conversations', sanitizeConversationState(message.state));
         break;
@@ -334,18 +488,18 @@ class DeepSeekChatController {
   describeConfiguration() {
     const config = vscode.workspace.getConfiguration('deepseekHarness');
     const configRoot = this.resolveConfigRoot(config);
-    const harnessRoot = this.resolveHarnessRoot(config);
     const disabledFeatureGroups = normalizeDisabledFeatureGroups(this.secureSetting(config, 'disabledFeatureGroups', []));
     return {
       model: config.get('modelLabel', 'DeepSeek V4 Pro'),
       cwd: this.resolveWorkingDirectory(config),
       configRoot,
-      harnessRoot,
+      harnessRoot: this.resolveHarnessRoot(config),
       nodePath: String(this.secureSetting(config, 'nodePath', 'node') || 'node'),
       sessionRoot: String(process.env.DSH_SESSION_ROOT || path.join(os.homedir(), '.dsh', '.sessions')),
       credentialsConfigured: fs.existsSync(path.join(configRoot, '.credentials.yaml')),
       preset: 'Current Cordis configuration',
-      reasoningEffort: '由 Harness 配置决定',
+      reasoningEffort: 'max',
+      uiLanguage: this.uiLanguage,
       extensionVersion: String(this.context.extension.packageJSON.version || ''),
       featureGroups: OPTIONAL_FEATURE_GROUPS.map((item) => ({
         id: item.id,
@@ -372,14 +526,12 @@ class DeepSeekChatController {
         .map((entry) => entry.name)
         .sort((a, b) => a.localeCompare(b));
     } catch { /* optional directory */ }
-    const bridgePath = path.join(this.context.extensionPath, 'adapter', 'acp-bridge.mjs');
-    const cordisPath = path.join(this.context.extensionPath, 'adapter', 'cordis.yml');
     const checks = [
       ['工作目录', configuration.cwd, configuration.cwd && fs.existsSync(configuration.cwd)],
       ['Harness 目录', configuration.harnessRoot, configuration.harnessRoot && fs.existsSync(configuration.harnessRoot)],
       ['配置目录', configuration.configRoot, configuration.configRoot && fs.existsSync(configuration.configRoot)],
-      ['ACP 桥接文件', bridgePath, fs.existsSync(bridgePath)],
-      ['Cordis 配置', cordisPath, fs.existsSync(cordisPath)],
+      ['ACP 桥接文件', path.join(configuration.configRoot, 'acp-bridge.mjs'), fs.existsSync(path.join(configuration.configRoot, 'acp-bridge.mjs'))],
+      ['Cordis 配置', path.join(configuration.configRoot, 'cordis.yml'), fs.existsSync(path.join(configuration.configRoot, 'cordis.yml'))],
       ['API 凭据', '仅检查是否已配置，不读取内容', configuration.credentialsConfigured],
       ['会话目录', configuration.sessionRoot, fs.existsSync(configuration.sessionRoot)],
     ].map(([label, detail, ok]) => ({ label, detail: String(detail || ''), ok: Boolean(ok) }));
@@ -585,6 +737,7 @@ class DeepSeekChatController {
         type: 'session', conversationId, sessionId: existing, runtimeId: this.runtimeId,
         modes: controls.modes, configOptions: controls.configOptions,
       });
+      void this.refreshDashboard(conversationId);
       return existing;
     }
     const config = vscode.workspace.getConfiguration('deepseekHarness');
@@ -600,6 +753,7 @@ class DeepSeekChatController {
             modes: resumed?.modes, configOptions: resumed?.configOptions, resumed: true,
           });
           this.sessionControls.set(conversationId, { modes: resumed?.modes, configOptions: resumed?.configOptions });
+          void this.refreshDashboard(conversationId);
           return resumeSessionId;
         } catch (error) {
           this.output.appendLine(`[resume] ${redactSecrets(error?.message || String(error))}`);
@@ -618,6 +772,7 @@ class DeepSeekChatController {
         configOptions: created.configOptions,
       });
       this.sessionControls.set(conversationId, { modes: created.modes, configOptions: created.configOptions });
+      void this.refreshDashboard(conversationId);
       return created.sessionId;
     } catch (error) {
       this.reportError(error, conversationId);
@@ -638,6 +793,7 @@ class DeepSeekChatController {
       this.post({ type: 'connectionNotice', conversationId, message: '请先停止当前任务，再清空对话上下文。' });
       return;
     }
+
     const previousSessionId = this.sessionIds.get(conversationId);
     const previousControls = this.sessionControls.get(conversationId);
     this.sessionControls.delete(conversationId);
@@ -651,6 +807,7 @@ class DeepSeekChatController {
       if (previousControls) this.sessionControls.set(conversationId, previousControls);
       return;
     }
+
     if (previousSessionId && previousSessionId !== nextSessionId) this.localByBackend.delete(previousSessionId);
     for (const key of [...this.toolCalls.keys()]) {
       if (key.startsWith(`${conversationId}:`)) this.toolCalls.delete(key);
@@ -684,21 +841,79 @@ class DeepSeekChatController {
       await vscode.commands.executeCommand('setContext', 'deepseekHarness.turnInProgress', this.turnsInProgress.size > 0);
       this.post({ type: 'turnState', conversationId, active: false });
       this.finishCancelState(conversationId);
+      if (!this.cancelRequested.has(conversationId)) setTimeout(() => { void this.drainQueuedPrompt(conversationId); }, 0);
     }
+  }
+
+  enqueuePrompt(text, conversationId, requestedQueueId) {
+    const prompt = text.trim();
+    if (!prompt || !conversationId) return;
+    const queueId = requestedQueueId || crypto.randomUUID();
+    const queue = this.queuedPrompts.get(conversationId) || [];
+    if (queue.length >= 20 || Buffer.byteLength(prompt, 'utf8') > 256 * 1024) {
+      this.post({ type: 'restoreInput', conversationId, text: prompt });
+      this.post({ type: 'connectionNotice', conversationId, message: queue.length >= 20 ? '排队消息已达到 20 条上限。' : '单条排队消息不能超过 256KB。' });
+      return;
+    }
+    queue.push({ id: queueId, text: prompt });
+    this.queuedPrompts.set(conversationId, queue);
+    this.post({ type: 'queuedPrompt', conversationId, queueId, text: prompt, position: queue.length });
+    if (!this.turnsInProgress.has(conversationId)) setTimeout(() => { void this.drainQueuedPrompt(conversationId); }, 0);
+  }
+
+  cancelQueuedPrompt(conversationId, queueId) {
+    if (!conversationId || !queueId) return;
+    const queue = this.queuedPrompts.get(conversationId) || [];
+    const next = queue.filter((item) => item.id !== queueId);
+    if (next.length) this.queuedPrompts.set(conversationId, next);
+    else this.queuedPrompts.delete(conversationId);
+    this.post({ type: 'queuedPromptCancelled', conversationId, queueId });
+  }
+
+  async drainQueuedPrompt(conversationId) {
+    if (!conversationId || this.drainingQueues.has(conversationId) || this.turnsInProgress.has(conversationId) || this.cancelRequested.has(conversationId)) return;
+    const queue = this.queuedPrompts.get(conversationId) || [];
+    const next = queue.shift();
+    if (!next) return;
+    if (queue.length) this.queuedPrompts.set(conversationId, queue);
+    else this.queuedPrompts.delete(conversationId);
+    this.post({ type: 'queuedPromptStarted', conversationId, queueId: next.id });
+    this.drainingQueues.add(conversationId);
+    try {
+      await this.sendPrompt(next.text, conversationId);
+    } finally {
+      this.drainingQueues.delete(conversationId);
+    }
+  }
+
+  async steerQueuedPrompts(text, conversationId) {
+    const current = text.trim();
+    const queue = this.queuedPrompts.get(conversationId) || [];
+    const prompts = [...queue.map((item) => item.text), ...(current ? [current] : [])];
+    if (!prompts.length) return;
+    const combined = prompts.join('\n\n');
+    const steered = await this.steerConversation(combined, conversationId);
+    if (!steered) {
+      if (current) this.post({ type: 'restoreInput', conversationId, text: current });
+      return;
+    }
+    this.queuedPrompts.delete(conversationId);
+    this.post({ type: 'queuedPromptsSteering', conversationId, queueIds: queue.map((item) => item.id) });
   }
 
   async steerConversation(text, conversationId) {
     const prompt = text.trim();
-    if (!prompt || !conversationId || !this.turnsInProgress.has(conversationId)) return;
+    if (!prompt || !conversationId || !this.turnsInProgress.has(conversationId)) return false;
     const sessionId = this.sessionIds.get(conversationId);
-    if (!this.transport || !sessionId) return;
+    if (!this.transport || !sessionId) return false;
     try {
       await this.transport.request('deepseek-harness-vscode/session/steer', { sessionId, text: prompt });
       this.post({ type: 'userMessage', conversationId, text: prompt, steering: true });
       this.post({ type: 'connectionNotice', conversationId, message: '补充引导已加入当前任务，将在下一步生效。' });
+      return true;
     } catch (error) {
-      this.post({ type: 'restoreInput', conversationId, text: prompt });
       this.reportError(error, conversationId);
+      return false;
     }
   }
 
@@ -739,6 +954,7 @@ class DeepSeekChatController {
       const conversationId = this.localByBackend.get(params?.sessionId) || this.activeConversationId;
       if (conversationId && this.turnsInProgress.has(conversationId)) this.scheduleTurnStallCheck(conversationId);
       const update = params?.update;
+      let forwardedUpdate = update;
       if (conversationId && update?.sessionUpdate === 'current_mode_update') {
         const controls = this.sessionControls.get(conversationId) || {};
         this.sessionControls.set(conversationId, {
@@ -753,15 +969,38 @@ class DeepSeekChatController {
       if (conversationId && (update?.sessionUpdate === 'tool_call' || update?.sessionUpdate === 'tool_call_update')) {
         const key = `${conversationId}:${update.toolCallId}`;
         const previous = this.toolCalls.get(key) || {};
-        this.toolCalls.set(key, { ...previous, ...update });
+        this.toolCalls.delete(key);
+        const cached = safeCachedToolCall({ ...previous, ...update });
+        this.toolCalls.set(key, cached);
+        while (this.toolCalls.size > MAX_TOOL_CALL_CACHE) this.toolCalls.delete(this.toolCalls.keys().next().value);
+        forwardedUpdate = { sessionUpdate: update.sessionUpdate, ...cached };
       }
-      this.post({ type: 'sessionUpdate', conversationId, update });
+      this.post({ type: 'sessionUpdate', conversationId, update: forwardedUpdate });
+      if (conversationId && update?.sessionUpdate === 'tool_call_update'
+        && (update.status === 'completed' || update.status === 'failed')) {
+        setTimeout(() => { void this.refreshDashboard(conversationId); }, 0);
+      }
       return;
     }
     this.output.appendLine(`[notification] ${method} ${redactSecrets(JSON.stringify(params || {}))}`);
   }
 
   handleAgentRequest(method, params) {
+    if (method === 'deepseek-harness-vscode/session/request_question') {
+      const requestId = crypto.randomUUID();
+      const conversationId = this.localByBackend.get(params?.sessionId) || this.activeConversationId;
+      const questions = sanitizeQuestions(params?.questions);
+      if (!questions.length) throw new Error('Harness returned no valid questions');
+      return new Promise((resolve) => {
+        this.pendingQuestions.set(requestId, { resolve, conversationId, questions });
+        this.post({
+          type: 'question',
+          requestId,
+          conversationId,
+          questions,
+        });
+      });
+    }
     if (method !== 'session/request_permission') {
       const error = new Error(`Unsupported client method: ${method}`);
       error.code = -32601;
@@ -771,7 +1010,7 @@ class DeepSeekChatController {
     const conversationId = this.localByBackend.get(params?.sessionId) || this.activeConversationId;
     const toolCallId = params?.toolCall?.toolCallId;
     const cached = conversationId && toolCallId ? this.toolCalls.get(`${conversationId}:${toolCallId}`) : undefined;
-    const toolCall = { ...(cached || {}), ...(params?.toolCall || {}) };
+    const toolCall = safeCachedToolCall({ ...(cached || {}), ...(params?.toolCall || {}) });
     return new Promise((resolve) => {
       this.pendingPermissions.set(requestId, { resolve, conversationId });
       this.post({
@@ -793,6 +1032,32 @@ class DeepSeekChatController {
       : { outcome: { outcome: 'cancelled' } });
   }
 
+  resolveQuestion(requestId, answers) {
+    const pending = this.pendingQuestions.get(requestId);
+    if (!pending) return;
+    this.pendingQuestions.delete(requestId);
+    const questionsById = new Map(pending.questions.map((question) => [question.id, question]));
+    const answered = new Set();
+    const safeAnswers = Array.isArray(answers) ? answers.slice(0, 3).flatMap((item) => {
+      if (!item || typeof item !== 'object') return [];
+      const id = boundedString(item.id, '', 128);
+      const question = questionsById.get(id);
+      if (!question || answered.has(id)) return [];
+      answered.add(id);
+      const allowed = new Set((question.options || []).map((option) => option.label));
+      const selected = (Array.isArray(item.selected) ? item.selected : [])
+        .map((value) => boundedString(value, '', 160))
+        .filter((value) => value && allowed.has(value))
+        .slice(0, question.multiSelect ? 20 : 1);
+      return [{
+        id,
+        selected,
+        ...(typeof item.custom === 'string' && item.custom.trim() ? { custom: boundedString(item.custom.trim(), '', 4000) } : {}),
+      }];
+    }) : [];
+    pending.resolve({ answers: safeAnswers });
+  }
+
   cancelTurn(conversationId = this.activeConversationId) {
     const sessionId = this.sessionIds.get(conversationId);
     if (!this.transport || !sessionId || !this.turnsInProgress.has(conversationId)) {
@@ -800,6 +1065,9 @@ class DeepSeekChatController {
       return;
     }
     this.cancelRequested.add(conversationId);
+    const queued = this.queuedPrompts.get(conversationId) || [];
+    this.queuedPrompts.delete(conversationId);
+    if (queued.length) this.post({ type: 'queuedPromptsCancelled', conversationId, queueIds: queued.map((item) => item.id), reason: '停止当前任务时已同时取消排队消息。' });
     this.post({ type: 'cancelState', conversationId, state: 'requested' });
     this.transport.notify('session/cancel', { sessionId });
     const previous = this.cancelEscalationTimers.get(conversationId);
@@ -816,6 +1084,13 @@ class DeepSeekChatController {
       pending.resolve({ outcome: { outcome: 'cancelled' } });
       this.pendingPermissions.delete(id);
     }
+    for (const [id, pending] of this.pendingQuestions) {
+      if (pending.conversationId !== conversationId) continue;
+      pending.resolve({ answers: [] });
+      this.pendingQuestions.delete(id);
+      this.post({ type: 'questionCancelled', conversationId, requestId: id });
+    }
+    this.post({ type: 'connectionNotice', conversationId, message: '正在取消当前任务…' });
   }
 
   scheduleTurnStallCheck(conversationId) {
@@ -874,11 +1149,12 @@ class DeepSeekChatController {
     const needle = query.trim().toLowerCase().slice(0, 100);
     const uris = await vscode.workspace.findFiles(
       '**/*',
-      '**/{.git,node_modules,dist,build,.deepseek,.deepseek-harness-vscode,.dsh,.sessions}/**',
+      '**/{.git,node_modules,dist,build,.deepseek,.dsh,.sessions}/**',
       500,
     );
     const files = uris
       .map((uri) => vscode.workspace.asRelativePath(uri, false).replaceAll('\\', '/'))
+      .filter((item) => !isSensitiveWorkspacePath(item))
       .filter((item) => !needle || item.toLowerCase().includes(needle))
       .sort((a, b) => {
         const ai = a.toLowerCase().indexOf(needle);
@@ -941,6 +1217,45 @@ class DeepSeekChatController {
     }
   }
 
+  async refreshDashboard(conversationId) {
+    if (!conversationId || this.dashboardRequests.has(conversationId)) return;
+    const sessionId = this.sessionIds.get(conversationId);
+    if (!this.transport || !sessionId) return;
+    this.dashboardRequests.add(conversationId);
+    try {
+      const state = await this.transport.request('deepseek-harness-vscode/session/dashboard', { sessionId }, 10000);
+      this.post({ type: 'dashboardState', conversationId, goal: state?.goal ?? null, subagents: state?.subagents ?? [] });
+    } catch (error) {
+      this.output.appendLine(`[dashboard] ${redactSecrets(error?.message || String(error))}`);
+    } finally {
+      this.dashboardRequests.delete(conversationId);
+    }
+  }
+
+  async goalAction(conversationId, action) {
+    if (!['pause', 'resume', 'clear'].includes(action)) return;
+    const sessionId = this.sessionIds.get(conversationId);
+    if (!this.transport || !sessionId) return;
+    try {
+      const state = await this.transport.request('deepseek-harness-vscode/session/goal_action', { sessionId, action }, 10000);
+      this.post({ type: 'dashboardState', conversationId, goal: state?.goal ?? null, subagents: state?.subagents ?? [] });
+    } catch (error) {
+      this.reportError(error, conversationId);
+    }
+  }
+
+  async interruptSubagent(conversationId, subagentId) {
+    if (!subagentId) return;
+    const sessionId = this.sessionIds.get(conversationId);
+    if (!this.transport || !sessionId) return;
+    try {
+      const state = await this.transport.request('deepseek-harness-vscode/session/subagent_interrupt', { sessionId, subagentId }, 10000);
+      this.post({ type: 'dashboardState', conversationId, goal: state?.goal ?? null, subagents: state?.subagents ?? [] });
+    } catch (error) {
+      this.reportError(error, conversationId);
+    }
+  }
+
   insertInputText(text) {
     this.open();
     if (this.webviewReady) this.post({ type: 'insertInput', text });
@@ -970,7 +1285,7 @@ class DeepSeekChatController {
     if (value === 'full-access') {
       const choice = await vscode.window.showWarningMessage(
         '全部放行会关闭逐次工具审核，并解除文件沙盒边界。DeepSeek 随后可以直接修改整台机器。',
-        { modal: true, detail: '这是超危险模式。仅在完全可信的工作区、且使用者明确愿意承担风险时使用。' },
+        { modal: true, detail: '这是超危险模式。仅在完全可信的工作区、且你明确愿意承担风险时使用。' },
         '确认全部放行（超危险！）',
       );
       if (choice !== '确认全部放行（超危险！）') {
@@ -1069,7 +1384,11 @@ class DeepSeekChatController {
     const resumeSessionId = conversationId ? this.sessionIds.get(conversationId) : undefined;
     this.stopTransport();
     this.runtimeId = crypto.randomUUID();
-    this.post({ type: 'runtimeReset', runtimeId: this.runtimeId, message: 'Harness 运行时已手动重启，正在恢复当前会话。' });
+    this.post({
+      type: 'runtimeReset',
+      runtimeId: this.runtimeId,
+      message: 'Harness 运行时已手动重启，正在恢复当前会话。',
+    });
     if (conversationId) await this.startSession(conversationId, resumeSessionId);
     this.post({ type: 'diagnostics', ...this.buildDiagnostics() });
   }
@@ -1110,6 +1429,7 @@ class DeepSeekChatController {
     this.localByBackend.clear();
     this.toolCalls.clear();
     this.sessionControls.clear();
+    this.dashboardRequests.clear();
     this.turnsInProgress.clear();
     for (const timer of this.turnActivityTimers.values()) clearTimeout(timer);
     for (const timer of this.cancelEscalationTimers.values()) clearTimeout(timer);
@@ -1122,6 +1442,16 @@ class DeepSeekChatController {
       pending.resolve({ outcome: { outcome: 'cancelled' } });
       this.pendingPermissions.delete(id);
     }
+    for (const [id, pending] of this.pendingQuestions) {
+      pending.resolve({ answers: [] });
+      this.pendingQuestions.delete(id);
+      this.post({ type: 'questionCancelled', conversationId: pending.conversationId, requestId: id });
+    }
+    for (const [conversationId, queue] of this.queuedPrompts) {
+      this.post({ type: 'queuedPromptsCancelled', conversationId, queueIds: queue.map((item) => item.id), reason: 'Harness 运行时已重置，排队消息没有自动执行。' });
+    }
+    this.queuedPrompts.clear();
+    this.drainingQueues.clear();
     for (const conversationId of stoppedConversations) {
       this.post({ type: 'turnState', conversationId, active: false });
       if (this.cancelRequested.delete(conversationId)) {
@@ -1142,8 +1472,13 @@ class DeepSeekChatController {
     this.disposePanel();
   }
 
+  t(source) {
+    return translate(source, this.uiLanguage);
+  }
+
   getHtml(webview) {
     const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'style.css'));
+    const i18nUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'i18n.js'));
     const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'main.js'));
     const nonce = crypto.randomBytes(16).toString('hex');
     return `<!doctype html>
@@ -1173,6 +1508,10 @@ class DeepSeekChatController {
   </header>
   <aside id="sessionPanel" class="session-panel" hidden>
     <div class="session-panel-header"><strong>所有对话</strong><div><button id="closeHistory" class="icon-button" title="关闭">×</button></div></div>
+    <div class="session-filter">
+      <input id="sessionSearch" type="search" placeholder="搜索标题和内容…" aria-label="搜索对话">
+      <label><input id="showArchived" type="checkbox"> 显示归档</label>
+    </div>
     <div id="sessionList" class="session-list"></div>
   </aside>
   <div id="settingsOverlay" class="settings-overlay" hidden>
@@ -1188,14 +1527,19 @@ class DeepSeekChatController {
             <div><span>连接状态</span><strong id="managementStatus">正在连接</strong></div>
             <div><span>扩展版本</span><strong id="managementVersion">—</strong></div>
             <div><span>Harness 配置</span><strong id="managementPreset">Current Cordis configuration</strong></div>
-            <div><span>推理强度</span><strong id="managementReasoning">由 Harness 配置决定</strong></div>
+            <div><span>推理强度</span><strong id="managementReasoning">Max</strong></div>
             <div><span>模型</span><strong id="managementModel">DeepSeek V4 Pro</strong></div>
             <div><span>API 凭据</span><strong id="managementCredentials">检查中</strong></div>
           </div>
-          <p class="settings-note">Harness 配置与权限审核是两套独立设置；此处显示当前 Cordis 配置，不替代 Harness 自身的配置管理。</p>
+          <p class="settings-note">Harness 配置与权限审核是两套独立设置；当前不提供 Minimal、PTC 或实验预设切换。</p>
         </section>
         <section class="management-section">
           <h2>对话显示与安全</h2>
+          <label class="management-field"><span>界面语言</span><select id="uiLanguage" class="approval-select" title="界面语言">
+            <option value="zh-CN" data-i18n-skip>中文</option>
+            <option value="en" data-i18n-skip>English</option>
+            <option value="ja" data-i18n-skip>日本語</option>
+          </select></label>
           <label class="management-field"><span>工具审核</span><select id="approvalMode" class="approval-select" title="工具审核方式">
             <option value="manual">全部手动审核</option>
             <option value="sandbox">沙盒内自动，越界询问</option>
@@ -1253,8 +1597,23 @@ class DeepSeekChatController {
       </div>
     </section>
   </div>
-  <div id="workspaceBar" class="workspace-bar"></div>
-  <section id="sessionControls" class="session-controls" hidden></section>
+  <div class="context-header">
+    <div id="workspaceBar" class="workspace-bar"></div>
+    <section id="sessionControls" class="session-controls" hidden></section>
+    <section id="runtimeDashboard" class="runtime-dashboard" hidden>
+      <div id="goalBar" class="goal-bar" hidden>
+        <span class="dashboard-icon">◇</span>
+        <div class="goal-copy"><span>Goal</span><strong id="goalObjective">—</strong></div>
+        <span id="goalStatus" class="dashboard-status">—</span>
+        <button id="goalToggle" class="dashboard-button" type="button">暂停</button>
+        <button id="goalClear" class="dashboard-icon-button" type="button" title="清除 Goal">×</button>
+      </div>
+      <details id="subagentPanel" class="subagent-panel" hidden>
+        <summary><span class="dashboard-icon">◇</span><strong>Subagents</strong><span id="subagentSummary">0</span></summary>
+        <div id="subagentList" class="subagent-list"></div>
+      </details>
+    </section>
+  </div>
   <main id="conversation" aria-live="polite">
     <section id="welcome" class="welcome">
       <div class="welcome-mark">DS</div>
@@ -1268,6 +1627,7 @@ class DeepSeekChatController {
       <textarea id="input" rows="1" placeholder="向 DeepSeek Harness 提出任务…"></textarea>
       <div class="composer-bottom">
         <div class="composer-left">
+          <button id="contextMeter" class="context-meter" type="button" aria-label="上下文占用" aria-expanded="false" title="上下文占用尚未知"><span id="contextRing" class="context-ring"><i></i></span><span id="contextLabel">Context —</span></button>
           <button id="usageButton" class="usage-button" type="button" aria-expanded="false" title="当前对话 Token 用量">In 0 · Out 0 · Cache —</button>
           <span id="composerHint">Enter 发送 · Shift+Enter 换行</span>
           <section id="usagePanel" class="usage-panel" hidden>
@@ -1278,20 +1638,33 @@ class DeepSeekChatController {
               <div><dt>Cache hit rate</dt><dd id="usageCacheRate">—</dd></div>
               <div><dt>Cache hit tokens</dt><dd id="usageCacheRead">0</dd></div>
               <div><dt>Uncached input</dt><dd id="usageUncached">0</dd></div>
-              <div class="usage-cost-total"><dt>Estimated cost</dt><dd id="usageCost">¥0.000000</dd></div>
+              <div><dt>Context</dt><dd id="usageContext">—</dd></div>
+              <div><dt>TTFT</dt><dd id="usageTtft">—</dd></div>
+              <div><dt>Output speed</dt><dd id="usageThroughput">—</dd></div>
+              <div><dt>当前费率</dt><dd id="usagePriceTier">—</dd></div>
+              <div class="usage-cost-total"><dt>Estimated cost</dt><dd id="usageCost">$0.000000</dd></div>
             </dl>
             <p id="usageCostBreakdown"></p>
-            <p>仅在打开这里时显示费用。按当前官方 V4 Pro 单价估算：缓存命中 ¥0.025/M、未命中 ¥3/M、输出 ¥6/M；实际账单以 DeepSeek 为准。</p>
+            <p>仅在打开这里时显示费用。按 DeepSeek V4 Pro 当前官方美元单价估算：缓存命中 $0.003625/M、未命中输入 $0.435/M、输出 $0.87/M；实际账单以 DeepSeek 为准。</p>
+            <div class="usage-panel-actions">
+              <button id="usageCompact" class="management-button" type="button" title="压缩较早的对话上下文">Compact</button>
+              <button id="usageClear" class="management-button warning-management-button" type="button" title="清空当前对话并新建 Harness 上下文">/clear</button>
+            </div>
           </section>
         </div>
-        <div class="composer-settings-wrap">
-          <button id="composerSettings" class="icon-button composer-settings-button" type="button" title="设置" aria-expanded="false">⚙</button>
-        </div>
+        <label class="composer-approval-wrap" title="工具权限模式">
+          <select id="composerApprovalMode" class="composer-approval-select" aria-label="工具权限模式">
+            <option value="manual">手动审核</option>
+            <option value="sandbox">沙盒自动</option>
+            <option value="full-access">全部放行</option>
+          </select>
+        </label>
         <button id="cancel" class="cancel-button" title="停止" hidden>■</button>
         <button id="send" class="send-button" title="发送">↑</button>
       </div>
     </div>
   </footer>
+  <script nonce="${nonce}" src="${i18nUri}"></script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

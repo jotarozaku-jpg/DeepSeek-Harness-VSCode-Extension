@@ -13,6 +13,16 @@ function normalizeAutoAllowTools(value) {
   return [...new Set(value.filter((item) => typeof item === 'string' && SAFE_AUTO_ALLOW_TOOLS.has(item)))];
 }
 
+function isSensitiveWorkspacePath(value) {
+  const normalized = String(value || '').replace(/\\/g, '/').toLowerCase();
+  const segments = normalized.split('/').filter(Boolean);
+  const basename = segments.at(-1) || '';
+  if (segments.some((segment) => segment === '.git' || segment === '.deepseek')) return true;
+  if (basename === '.env' || basename.startsWith('.env.')) return true;
+  if (/(?:^|[._-])(credential|credentials|secret|secrets|token|tokens|api[._-]?key)(?:[._-]|$)/i.test(basename)) return true;
+  return /\.(?:pem|key|p12|pfx|jks|keystore)$/i.test(basename);
+}
+
 function redactSecrets(value) {
   return String(value)
     .replace(/sk-[A-Za-z0-9_-]{16,}/g, 'sk-***REDACTED***')
@@ -50,4 +60,4 @@ class SecretRedactingBuffer {
   }
 }
 
-module.exports = { normalizeApprovalMode, normalizeAutoAllowTools, redactSecrets, SecretRedactingBuffer };
+module.exports = { normalizeApprovalMode, normalizeAutoAllowTools, isSensitiveWorkspacePath, redactSecrets, SecretRedactingBuffer };

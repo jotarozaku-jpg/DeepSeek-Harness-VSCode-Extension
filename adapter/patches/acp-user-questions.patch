@@ -1,0 +1,55 @@
+diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
+--- a/packages/acp/acp/src/index.ts
++++ b/packages/acp/acp/src/index.ts
+@@ -41,7 +41,7 @@ import { acpPromptToText, promptHasUnsupportedContent, turnEndToStopReason } fro
+ 
+ export const name = 'acp'
+ /** The bridge creates and owns agents; every other concern is carried by the agent composition. */
+-export const inject = ['agents']
++export const inject = ['agents', 'userQuestions']
+ 
+ /**
+  * The single continuable-subagent teardown the bridge needs. Declared
+@@ -108,7 +108,13 @@ export function apply(ctx: Context, config: AcpConfig): void {
+   const agents = ctx.agents
+   const logger = ctx.logger
+   const sessions = new Map<SessionId, SessionRecord>()
+   const compactAborts = new Map<SessionId, AbortController>()
++  const userQuestions = (ctx as Context & {
++    userQuestions: {
++      registerProvider(provider: { ask(request: Record<string, unknown>): Promise<Record<string, unknown>> }): () => void
++    }
++    effect(callback: () => () => void): void
++  }).userQuestions
+   let closed = false
+   let conn: AgentSideConnection
+ 
+@@ -227,6 +233,28 @@ export function apply(ctx: Context, config: AcpConfig): void {
+     })
+   })
+ 
++  ;(ctx as Context & { effect(callback: () => () => void): void }).effect(() => userQuestions.registerProvider({
++    async ask(request: Record<string, unknown>): Promise<Record<string, unknown>> {
++      const agent = request.agent as Agent | undefined
++      const record = agent === undefined ? undefined : ownedRecord(agent)
++      if (record === undefined) throw new Error('ACP could not map the question to an owned root session')
++      const response = await conn.extMethod('deepseek-harness-vscode/session/request_question', {
++        sessionId: record.agent.session.id,
++        questions: Array.isArray(request.questions) ? request.questions : [],
++      })
++      if (!Array.isArray(response.answers)) throw new Error('ACP client returned an invalid question answer')
++      return {
++        answers: response.answers.flatMap((answer: unknown) => {
++          if (typeof answer !== 'object' || answer === null) return []
++          const value = answer as { id?: unknown; selected?: unknown; custom?: unknown }
++          if (typeof value.id !== 'string' || !Array.isArray(value.selected)) return []
++          return [{ id: value.id, selected: value.selected.filter((item): item is string => typeof item === 'string'),
++            ...(typeof value.custom === 'string' ? { custom: value.custom } : {}) }]
++        }),
++      }
++    },
++  }))
++
+   const makeAgent = (connection: AgentSideConnection): AcpAgent => {
+     conn = connection
+     return {

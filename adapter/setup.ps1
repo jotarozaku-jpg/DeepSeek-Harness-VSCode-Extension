@@ -17,7 +17,9 @@ $pinnedCommit = (Get-Content -LiteralPath $versionFile -Raw).Trim()
 $acpPatches = @(
     (Join-Path $PSScriptRoot 'patches\acp-rich-events.patch'),
     (Join-Path $PSScriptRoot 'patches\acp-resume-compact.patch'),
-    (Join-Path $PSScriptRoot 'patches\acp-steer.patch')
+    (Join-Path $PSScriptRoot 'patches\acp-steer.patch'),
+    (Join-Path $PSScriptRoot 'patches\acp-user-questions.patch'),
+    (Join-Path $PSScriptRoot 'patches\acp-dashboard.patch')
 )
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {

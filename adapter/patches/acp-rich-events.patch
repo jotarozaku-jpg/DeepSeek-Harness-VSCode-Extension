@@ -12,7 +12,7 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
    type StopReason,
    type Stream,
  } from '@agentclientprotocol/sdk'
-@@ -127,6 +131,80 @@ export function apply(ctx: Context, config: AcpConfig): void {
+@@ -127,6 +131,105 @@ export function apply(ctx: Context, config: AcpConfig): void {
      return record
    }
  
@@ -90,22 +90,47 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
 +    }
 +  }
 +
++  /** Read the token-meter projection without making it a hard ACP dependency. */
++  const contextUsage = (session: Agent['session'], fallbackUsed = 0): { used: number; size: number } => {
++    try {
++      const projections = (ctx as Context & {
++        get(name: string): unknown
++      }).get('sessionProjections') as {
++        snapshot(value: Agent['session']): { values: Record<string, unknown> }
++      } | undefined
++      const pressure = projections?.snapshot(session).values.contextPressure as {
++        pressureTokens?: unknown
++        projectedTokens?: unknown
++        contextWindow?: unknown
++      } | undefined
++      const projected = Number(pressure?.projectedTokens)
++      const sampled = Number(pressure?.pressureTokens)
++      const size = Number(pressure?.contextWindow)
++      const used = Number.isFinite(projected) && projected >= 0
++        ? projected
++        : Number.isFinite(sampled) && sampled >= 0 ? sampled : fallbackUsed
++      return { used: Math.max(0, Math.floor(used)), size: Number.isFinite(size) && size > 0 ? Math.floor(size) : 0 }
++    } catch {
++      return { used: Math.max(0, Math.floor(fallbackUsed)), size: 0 }
++    }
++  }
++
    /** Send a protocol update without letting a disconnected client fail an agent turn. */
    const notify = (notification: SessionNotification): void => {
      /* v8 ignore next 3 -- only a transport write failure reaches this guard. */
-@@ -149,9 +227,8 @@ export function apply(ctx: Context, config: AcpConfig): void {
+@@ -149,9 +252,8 @@ export function apply(ctx: Context, config: AcpConfig): void {
      inflight.reject(internalError(`turn failed: ${reason.error.message}`))
    }
  
 -  // Emit only committed assistant text. Raw chunks, reasoning, tools, plans,
 -  // titles, and retry markers are presentation or trace data and stay off the
 -  // automation wire.
-+  // VS Code rich-client bridge: retain committed assistant text while also exposing
++  // Rich-client bridge: retain committed assistant text while also exposing
 +  // model-provided reasoning and the Harness tool lifecycle over standard ACP updates.
    ctx.on('session/event', (session, event: SessionEvent) => {
      const record = sessions.get(session.header.id)
      if (record === undefined || record.agent.session !== session) return
-@@ -179,6 +256,56 @@ export function apply(ctx: Context, config: AcpConfig): void {
+@@ -179,6 +281,57 @@ export function apply(ctx: Context, config: AcpConfig): void {
              })
            }
          }
@@ -124,12 +149,13 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
 +        const cacheReadTokens = usage.cacheReadTokens ?? 0
 +        const cacheWriteTokens = usage.cacheWriteTokens ?? 0
 +        const inputTokens = usage.inputTokens + cacheReadTokens + cacheWriteTokens
++        const context = contextUsage(record.agent.session, inputTokens)
 +        notify({
 +          sessionId: record.agent.session.id,
 +          update: {
 +            sessionUpdate: 'usage_update',
-+            used: 0,
-+            size: 0,
++            used: context.used,
++            size: context.size,
 +            _meta: {
 +              clientUsage: {
 +                inputTokens,

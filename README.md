@@ -6,18 +6,23 @@
 
 > 状态：早期预览。DeepSeek Harness 本身仍处于开发者预览阶段；在上游 ACP 入口趋于稳定之前，本扩展暂时使用固定版本的小型兼容适配层。
 
-## 0.6.1 更新
+## 0.7.2 更新
 
-- 把权限模式、思考显示、Compact、`/clear`、运行路径和诊断统一到“设置与管理”窗口
-- 停止任务现在区分“已请求停止”“尚未确认”和“已确认停止”，避免只显示模糊的“停止中”
-- 思考过程中追加的引导会作为带“引导”标记的独立消息显示
-- 改进流式输出时的滚动跟随：手动向上阅读后不再强制拉到底部，主动跟随时则保持真正贴底
-- 新增 Harness 功能组管理，可开关 Skills、Subagent、Workflow / Ralph、Todo 和上下文压缩；核心 Cordis 组件保持锁定
-- 新增日志入口、运行环境检查、脱敏诊断复制与 Harness 重启
+- 设置页新增中文、英文、日文界面切换；仅翻译扩展固定 UI，不改写 Harness、Tool Call 或错误原文
+- 页面上方新增 Goal 与 Subagent 状态面板，可查看目标阶段、暂停/恢复/清除目标，并区分工作中、空闲和已结束的子 Agent
+- 点击上下文占用环会打开用量弹窗，可直接选择 `Compact` 或 `/clear`
+- 优化长对话内存占用：限制运行时缓存与 Tool Call 缓存、分批渲染旧消息、节流流式重绘和持久化写入
+- `@` 工作区文件建议会隐藏凭据、`.env`、`.deepseek`、私钥和其他常见敏感路径
+- 输入框旁新增上下文占用环，并在用量弹窗中显示 Context、TTFT 和输出速度
+- 忙碌时按 Enter 排队；`Ctrl+Enter` 会把全部队列连同当前输入一起作为插话发送
+- 会话列表支持标题/内容搜索（最多 20 项）、归档与 Fork。当前 ACP 没有原生会话 Fork，因此 Fork 会复制可见记录，并启动一个新的独立 Harness 会话
+- 新增结构化提问与 Plan 审核卡片；Harness 可以在继续执行前等待单选、多选或自定义回答
+- 输入 `/` 可打开斜杠菜单；支持 `/compact`、`/clear`、`/new`、`/history`、`/archive`、`/fork`、`/plan`、`/code`、`/settings` 和 `/help`
+- 用量估算更新为 DeepSeek V4 Pro 当前官方美元单价
 
 功能组开关只控制仓库随附 Cordis 配置中已经存在的组件，不会自动下载或删除外部插件代码。
 
-从 0.6.0 更新时请重新运行 `adapter\setup.ps1`，让固定版本的外部 Harness 重新构建本版兼容接口；脚本不会覆盖已有的 `.credentials.yaml`。
+从 0.6.x 更新时请重新运行 `adapter\setup.ps1`，让固定版本的外部 Harness 重新构建本版兼容接口；脚本不会覆盖已有的 `.credentials.yaml`。
 
 ## 功能
 
@@ -30,7 +35,14 @@
 - 打断、引导和 Compact
 - 统一的设置与管理窗口、`/clear` 与明确的停止确认状态
 - Harness 可选功能组、日志、诊断和运行时重启
-- Input、Output 与缓存 Token 估算
+- 上下文占用、TTFT、输出速度，以及 Input、Output、缓存命中和费用估算
+- 忙碌时的消息排队与 `Ctrl+Enter` 插话
+- 会话搜索、归档和本地记录 Fork
+- 结构化提问、Plan 审核卡片与斜杠命令
+- 中文、英文、日文固定界面切换
+- Goal 目标条与 Subagent 状态面板
+
+费用面板仅做参考估算。V4 Pro 当前官方美元价（每百万 Token）为缓存命中 `$0.003625`、未命中输入 `$0.435`、输出 `$0.87`；中文计价页对应 ¥0.025、¥3、¥6。最终账单以 DeepSeek 为准。
 
 ## ACP 是什么，以及本项目如何使用它
 
@@ -73,6 +85,8 @@ npm.cmd run smoke:approval
 npm.cmd run smoke:auto-approval
 npm.cmd run smoke:security
 npm.cmd run smoke:feature-groups
+npm.cmd run smoke:ui-features
+npm.cmd run smoke:i18n
 npm.cmd run package
 ```
 
@@ -100,18 +114,23 @@ This is a standalone Visual Studio Code extension that communicates with an exte
 
 > Status: early preview. DeepSeek Harness itself is currently a developer preview, and this extension uses a pinned compatibility adapter while the upstream ACP entry point is still evolving.
 
-### What is new in 0.6.1
+### What is new in 0.7.2
 
-- Approval modes, thought display, Compact, `/clear`, runtime paths and diagnostics now live in one Settings and Management dialog
-- Stop requests distinguish requested, unconfirmed and confirmed states
-- Steering messages sent during an active turn are rendered as separate labelled messages
-- Streaming scroll-follow respects manual reading and reliably pins to the true bottom when follow mode is active
-- Harness feature groups can toggle Skills, Subagents, Workflow / Ralph, Todo and compaction while core Cordis components remain locked
-- Added log access, runtime checks, sanitized diagnostic copying and Harness restart controls
+- Added Chinese, English and Japanese UI switching. Only extension-owned chrome is translated; Harness, tool-call and error payloads remain verbatim
+- Added Goal and Subagent dashboards above the conversation, including goal pause/resume/clear controls and working/idle/ended subagent states
+- Clicking the context ring now opens the usage popover with direct `Compact` and `/clear` actions
+- Reduced long-session memory use with bounded runtime/tool caches, paged rendering of older messages, and throttled streaming renders and state saves
+- Workspace `@` suggestions now hide credentials, `.env`, `.deepseek`, private keys and other common sensitive paths
+- Added a context-occupancy ring beside the composer, with Context, TTFT and output-throughput details in the usage popover
+- Enter queues a message while the agent is busy; `Ctrl+Enter` steers with the complete queue plus the current input
+- Session history now supports title/content search (up to 20 results), archive and Fork. ACP has no native session-fork method, so Fork copies visible records and starts a separate Harness session
+- Added structured single-choice, multiple-choice, custom-answer and Plan-review cards that can pause Harness until answered
+- Typing `/` opens a command menu for `/compact`, `/clear`, `/new`, `/history`, `/archive`, `/fork`, `/plan`, `/code`, `/settings` and `/help`
+- Usage estimates now use the current official DeepSeek V4 Pro USD rates
 
 Feature-group switches only control components already present in the bundled Cordis configuration. They never download or remove external plugin code.
 
-When updating from 0.6.0, rerun `adapter\setup.ps1` so the pinned external Harness is rebuilt with this version's compatibility interface. The script does not overwrite an existing `.credentials.yaml`.
+When updating from 0.6.x, rerun `adapter\setup.ps1` so the pinned external Harness is rebuilt with this version's compatibility interface. The script does not overwrite an existing `.credentials.yaml`.
 
 ### Features
 
@@ -124,7 +143,14 @@ When updating from 0.6.0, rerun `adapter\setup.ps1` so the pinned external Harne
 - Interrupt, steer and compact controls
 - Unified settings and management, `/clear`, and explicit stop confirmation states
 - Optional Harness feature groups, logs, diagnostics and runtime restart
-- Input, output and cache-token estimates
+- Context occupancy, TTFT, output throughput, input/output/cache usage and cost estimates
+- Queued prompts and `Ctrl+Enter` steering during active turns
+- Session search, archive and local-record Fork
+- Structured questions, Plan review cards and slash commands
+- Chinese, English and Japanese fixed-UI switching
+- Goal and Subagent status dashboards
+
+Cost figures are estimates only. Current official V4 Pro rates per million tokens are `$0.003625` cache hit, `$0.435` cache-miss input and `$0.87` output; the Chinese pricing page lists ¥0.025, ¥3 and ¥6 respectively. DeepSeek billing remains authoritative.
 
 ### What ACP is and how this project uses it
 
@@ -167,6 +193,8 @@ npm.cmd run smoke:approval
 npm.cmd run smoke:auto-approval
 npm.cmd run smoke:security
 npm.cmd run smoke:feature-groups
+npm.cmd run smoke:ui-features
+npm.cmd run smoke:i18n
 npm.cmd run package
 ```
 

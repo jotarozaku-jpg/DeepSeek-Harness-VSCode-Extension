@@ -105,7 +105,7 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
 +              notify({
 +                sessionId: record.agent.session.id,
 +                update: {
-+                  sessionUpdate: 'usage_update', used: 0, size: 0,
++                  sessionUpdate: 'usage_update', ...contextUsage(record.agent.session),
 +                  _meta: { clientUsage: {
 +                    inputTokens: usage.inputTokens + cacheReadTokens + cacheWriteTokens,
 +                    uncachedInputTokens: usage.inputTokens,

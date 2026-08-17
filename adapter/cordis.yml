@@ -44,6 +44,12 @@
 - id: approval-all-tools
   name: __DSH_APPROVAL_PLUGIN__
 
+- id: user-questions
+  name: '@deepseek-ai/dsh-user-questions'
+
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+
 - id: skill
   name: '@deepseek-ai/dsh-skill'
 
@@ -71,6 +77,12 @@
       maxBytes: 65536
     # Optional machine-local persona.md; empty when the file is absent.
     persona: __DSH_PERSONA__
+
+- id: plan-mode
+  name: '@deepseek-ai/dsh-plan-mode'
+  config:
+    section: |
+      You are in plan mode. Inspect the workspace without changing it, resolve important choices with ask_user_question, and present a decision-complete plan through exit_plan_mode. Do not implement until that review is explicitly approved.
 
 - id: tool-pwsh
   name: __DSH_TOOL_PWSH_PLUGIN__

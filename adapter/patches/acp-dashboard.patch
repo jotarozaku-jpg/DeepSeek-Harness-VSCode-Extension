@@ -1,0 +1,143 @@
+Exit code: 0
+Wall time: 0.9 seconds
+Output:
+diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
+--- a/packages/acp/acp/src/index.ts
++++ b/packages/acp/acp/src/index.ts
+@@ -60,10 +60,42 @@ interface ContinuableDrain {
+    * continuable descendants child-first.
+    */
+   drainContinuableDescendants(parents: readonly Agent[]): Promise<void>
+ }
+ 
++interface DashboardGoal {
++  readonly id: string
++  readonly revision: number
++  readonly objective: string
++  readonly phase: 'active' | 'paused' | 'blocked' | 'complete'
++  readonly maxGoalRounds: number
++  readonly roundsStarted: number
++  readonly blockedReason?: { readonly code: string; readonly message: string }
++}
++
++interface DashboardGoals {
++  get(agent: Agent): DashboardGoal | undefined
++  pause(agent: Agent, ref: { readonly id: string; readonly revision: number }): DashboardGoal
++  resume(agent: Agent, ref: { readonly id: string; readonly revision: number }): DashboardGoal
++  clear(agent: Agent, ref: { readonly id: string; readonly revision: number }): { readonly id: string; readonly revision: number }
++}
++
++interface DashboardSubagentEntry {
++  readonly kind: 'child' | 'diagnostic'
++  readonly id: SessionId
++  readonly parentId: SessionId
++  readonly depth: number
++  readonly activity?: 'running' | 'inactive'
++  readonly mode?: 'one-shot' | 'continuable'
++  readonly label?: string
++}
++
++interface DashboardSubagents extends ContinuableDrain {
++  listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<DashboardSubagentEntry[]>
++  interrupt(targetSessionId: SessionId, authority: { readonly kind: 'ancestor'; readonly agent: Agent }): void
++}
++
+ /** Optional compaction seam used by the client Compact button. */
+ interface ManualCompaction {
+   compactNow(
+     agent: Agent,
+     signal: AbortSignal,
+@@ -267,10 +299,32 @@ export function apply(ctx: Context, config: AcpConfig): void {
+     reason: Extract<TurnEndReason, { kind: 'error' }>,
+   ): void => {
+     inflight.reject(internalError(`turn failed: ${reason.error.message}`))
+   }
+ 
++  const dashboardState = async (record: SessionRecord): Promise<Record<string, unknown>> => {
++    const goals = ctx.get('goals') as DashboardGoals | undefined
++    const subagents = ctx.get('subagents') as DashboardSubagents | undefined
++    const goal = goals?.get(record.agent)
++    const rows = subagents === undefined
++      ? []
++      : await subagents.listDescendants(record.agent.session.id)
++    return {
++      goal: goal === undefined ? null : {
++        id: String(goal.id), revision: goal.revision, objective: goal.objective, phase: goal.phase,
++        maxGoalRounds: goal.maxGoalRounds, roundsStarted: goal.roundsStarted,
++        ...(goal.blockedReason === undefined ? {} : { blockedReason: goal.blockedReason }),
++      },
++      subagents: rows.flatMap(row => row.kind !== 'child' ? [] : [{
++        id: String(row.id), parentId: String(row.parentId), depth: row.depth,
++        activity: row.activity ?? 'inactive', mode: row.mode ?? 'one-shot',
++        workStatus: ctx.agents.get(row.id)?.status === 'running' ? 'working' : row.activity === 'running' ? 'idle' : 'ended',
++        label: row.label ?? String(row.id),
++      }]),
++    }
++  }
++
+   // rich-client bridge: retain committed assistant text while also exposing
+   // model-provided reasoning and the Harness tool lifecycle over standard ACP updates.
+   ctx.on('session/event', (session, event: SessionEvent) => {
+     const record = sessions.get(session.header.id)
+     if (record === undefined || record.agent.session !== session) return
+@@ -599,21 +652,55 @@ export function apply(ctx: Context, config: AcpConfig): void {
+         })
+         return { stopReason }
+       },
+ 
+       async extMethod(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+-        if (method !== 'deepseek-harness-vscode/session/steer') throw RequestError.methodNotFound(method)
+         assertOpen()
+         const sessionId = params.sessionId
+-        const text = params.text
+         if (typeof sessionId !== 'string' || sessionId.length === 0) {
+-          throw invalidParams('steer sessionId must be a non-empty string')
++          throw invalidParams('extension sessionId must be a non-empty string')
++        }
++        const record = requireSession(SessionId(sessionId))
++
++        if (method === 'deepseek-harness-vscode/session/dashboard') return dashboardState(record)
++
++        if (method === 'deepseek-harness-vscode/session/goal_action') {
++          const action = params.action
++          if (action !== 'pause' && action !== 'resume' && action !== 'clear') {
++            throw invalidParams('goal action must be pause, resume, or clear')
++          }
++          const goals = ctx.get('goals') as DashboardGoals | undefined
++          if (goals === undefined) throw internalError('goal service is not configured')
++          const goal = goals.get(record.agent)
++          if (goal === undefined) throw invalidParams('this session has no current goal')
++          const ref = { id: goal.id, revision: goal.revision }
++          if (action === 'pause') goals.pause(record.agent, ref)
++          else if (action === 'resume') goals.resume(record.agent, ref)
++          else goals.clear(record.agent, ref)
++          return dashboardState(record)
++        }
++
++        if (method === 'deepseek-harness-vscode/session/subagent_interrupt') {
++          const target = params.subagentId
++          if (typeof target !== 'string' || target.length === 0) {
++            throw invalidParams('subagentId must be a non-empty string')
++          }
++          const subagents = ctx.get('subagents') as DashboardSubagents | undefined
++          if (subagents === undefined) throw internalError('subagent service is not configured')
++          const rows = await subagents.listDescendants(record.agent.session.id)
++          if (!rows.some(row => row.kind === 'child' && row.id === target)) {
++            throw invalidParams('subagent is not a descendant of this session')
++          }
++          subagents.interrupt(SessionId(target), { kind: 'ancestor', agent: record.agent })
++          return dashboardState(record)
+         }
++
++        if (method !== 'deepseek-harness-vscode/session/steer') throw RequestError.methodNotFound(method)
++        const text = params.text
+         if (typeof text !== 'string' || text.trim().length === 0) {
+           throw invalidParams('steer text must be a non-empty string')
+         }
+-        const record = requireSession(SessionId(sessionId))
+         if (record.inflight === undefined) {
+           throw invalidParams('no prompt is in flight for this session')
+         }
+         if (ctx.agents.get(record.agent.id) !== record.agent) {
+           throw internalError('steer was not queued: the agent was disposed outside the bridge')
+

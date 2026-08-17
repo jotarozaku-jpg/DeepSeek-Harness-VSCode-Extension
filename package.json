@@ -2,7 +2,7 @@
   "name": "deepseek-harness-vscode",
   "displayName": "DeepSeek Harness for VS Code",
   "description": "An unofficial VS Code client for DeepSeek Harness over ACP.",
-  "version": "0.6.1",
+  "version": "0.7.2",
   "publisher": "community",
   "license": "MIT",
   "repository": {
@@ -167,11 +167,13 @@
     }
   },
   "scripts": {
-    "check": "node --check extension.js && node --check src/acpTransport.js && node --check src/security.js && node --check media/main.js && node --check adapter/acp-bridge.mjs && node --check adapter/runtime-feature-filter.mjs",
+    "check": "node --check extension.js && node --check src/acpTransport.js && node --check src/security.js && node --check media/i18n.js && node --check media/main.js && node --check adapter/acp-bridge.mjs && node --check adapter/runtime-feature-filter.mjs",
     "smoke:approval": "node tests/smoke-approval-mode.mjs",
     "smoke:auto-approval": "node tests/smoke-auto-approval.mjs",
     "smoke:security": "node tests/smoke-security.js",
     "smoke:feature-groups": "node tests/smoke-feature-groups.mjs",
+    "smoke:ui-features": "node tests/smoke-ui-features.mjs",
+    "smoke:i18n": "node tests/smoke-i18n.mjs",
     "prepackage": "node scripts/prepare-package.js",
     "package": "npx --yes @vscode/vsce@latest package --out dist/deepseek-harness-vscode.vsix"
   }
