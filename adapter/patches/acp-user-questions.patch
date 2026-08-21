@@ -1,7 +1,8 @@
 diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
+index d6ed6f42df..5aa402353e 100644
 --- a/packages/acp/acp/src/index.ts
 +++ b/packages/acp/acp/src/index.ts
-@@ -41,7 +41,7 @@ import { acpPromptToText, promptHasUnsupportedContent, turnEndToStopReason } fro
+@@ -48,7 +48,7 @@ import { turnEndToStopReason } from './codec.ts'
  
  export const name = 'acp'
  /** The bridge creates and owns agents; every other concern is carried by the agent composition. */
@@ -10,8 +11,7 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
  
  /**
   * The single continuable-subagent teardown the bridge needs. Declared
-@@ -108,7 +108,13 @@ export function apply(ctx: Context, config: AcpConfig): void {
-   const agents = ctx.agents
+@@ -139,6 +139,12 @@ export function apply(ctx: Context, config: AcpConfig): void {
    const logger = ctx.logger
    const sessions = new Map<SessionId, SessionRecord>()
    const compactAborts = new Map<SessionId, AbortController>()
@@ -23,8 +23,8 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
 +  }).userQuestions
    let closed = false
    let conn: AgentSideConnection
- 
-@@ -227,6 +233,28 @@ export function apply(ctx: Context, config: AcpConfig): void {
+   let imagePromptEnabled = false
+@@ -449,6 +455,28 @@ export function apply(ctx: Context, config: AcpConfig): void {
      })
    })
  

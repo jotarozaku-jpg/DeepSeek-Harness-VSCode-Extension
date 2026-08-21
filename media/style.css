@@ -350,6 +350,23 @@ a { color: var(--vscode-textLink-foreground); }
 #input { display: block; width: 100%; min-height: 46px; max-height: 220px; padding: 3px 5px 7px; resize: none; border: 0; outline: 0; color: var(--text); background: transparent; line-height: 1.55; }
 #input::placeholder { color: var(--muted); }
 .composer-bottom { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; }
+.image-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 5px 7px; }
+.image-chips[hidden] { display: none; }
+.image-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 240px; padding: 3px 5px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface-soft); font-size: 10px;
+}
+.image-chip img { width: 26px; height: 26px; border-radius: 5px; object-fit: cover; }
+.image-chip-name { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.image-chip-remove { width: 17px; height: 17px; padding: 0; border: 0; border-radius: 50%; color: var(--muted); background: transparent; cursor: pointer; font-size: 11px; line-height: 1; }
+.image-chip-remove:hover { color: var(--text); background: var(--surface); }
+.attach-button { flex: none; font-size: 12px; }
+.composer-model-wrap { display: inline-flex; flex: none; align-items: center; }
+.user-image-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.user-image-chip {
+  display: inline-flex; align-items: center; padding: 2px 7px; border: 1px solid var(--border);
+  border-radius: 7px; background: color-mix(in srgb, var(--page) 80%, transparent); font-size: 10px;
+}
 .composer-left { position: relative; display: flex; min-width: 0; flex: 1; align-items: center; gap: 9px; }
 #composerHint { padding-left: 5px; color: var(--muted); font-size: 10px; }
 .usage-button {

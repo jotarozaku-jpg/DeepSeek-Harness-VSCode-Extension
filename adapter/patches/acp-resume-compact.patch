@@ -1,7 +1,9 @@
 diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
+index 86aefa6226..1f5baa76b2 100644
 --- a/packages/acp/acp/src/index.ts
 +++ b/packages/acp/acp/src/index.ts
-@@ -7,6 +7,6 @@
+@@ -11,7 +11,7 @@
+ 
  import type { Context } from '@deepseek-ai/cordis'
  import { randomUUID } from 'node:crypto'
 -import { isAbsolute } from 'node:path'
@@ -9,16 +11,16 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
  import { Readable, Writable } from 'node:stream'
  import Schema from '@deepseek-ai/schemastery'
  import { createUserMessage, errorChain } from '@deepseek-ai/dsh-llm'
-@@ -28,6 +28,8 @@ import {
+@@ -29,6 +29,8 @@ import {
    type NewSessionResponse,
    type PromptRequest,
    type PromptResponse,
 +  type ResumeSessionRequest,
 +  type ResumeSessionResponse,
    type SessionNotification,
-   type ToolCall,
-   type ToolCallContent,
-@@ -81,6 +83,14 @@ interface ContinuableDrain {
+   type StopReason,
+   type Stream,
+@@ -61,6 +63,14 @@ interface ContinuableDrain {
    drainContinuableDescendants(parents: readonly Agent[]): Promise<void>
  }
  
@@ -33,23 +35,23 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
  /** Preserve invalid-parameter detail in the SDK wire error message. */
  function invalidParams(detail: string): RequestError {
    return RequestError.invalidParams(undefined, detail)
-@@ -106,6 +116,7 @@ export function apply(ctx: Context, config: AcpConfig): void {
+@@ -128,6 +138,7 @@ export function apply(ctx: Context, config: AcpConfig): void {
    const agents = ctx.agents
    const logger = ctx.logger
    const sessions = new Map<SessionId, SessionRecord>()
 +  const compactAborts = new Map<SessionId, AbortController>()
    let closed = false
    let conn: AgentSideConnection
- 
-@@ -242,6 +251,7 @@ export function apply(ctx: Context, config: AcpConfig): void {
+   let imagePromptEnabled = false
+@@ -450,6 +461,7 @@ export function apply(ctx: Context, config: AcpConfig): void {
            agentInfo: { name: 'deepseek-harness-acp', version: '0.0.1' },
            agentCapabilities: {
-             promptCapabilities: { image: false, audio: false, embeddedContext: false },
+             promptCapabilities: { image: imagePromptEnabled, audio: false, embeddedContext: false },
 +            sessionCapabilities: { resume: {} },
            },
            authMethods: [],
-         })
-@@ -277,6 +287,33 @@ export function apply(ctx: Context, config: AcpConfig): void {
+         }
+@@ -486,12 +498,88 @@ export function apply(ctx: Context, config: AcpConfig): void {
          return { sessionId }
        },
  
@@ -75,6 +77,7 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
 +        sessions.set(sessionId, {
 +          agent: handle.agent,
 +          dispose: () => handle.dispose(),
++          outputTail: Promise.resolve(),
 +          inflight: undefined,
 +        })
 +        return {}
@@ -83,11 +86,14 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
        async prompt(params: PromptRequest): Promise<PromptResponse> {
          assertOpen()
          const record = requireSession(SessionId(params.sessionId))
-@@ -289,6 +327,51 @@ export function apply(ctx: Context, config: AcpConfig): void {
-         const text = acpPromptToText(params.prompt)
-         if (text.trim().length === 0) throw invalidParams('empty prompt')
- 
-+        if (text.trim() === '/compact') {
+         if (record.inflight !== undefined) {
+           throw invalidParams('a prompt is already in flight for this session')
+         }
++
++        const compactRequested = params.prompt.length === 1
++          && params.prompt[0]?.type === 'text'
++          && params.prompt[0].text.trim() === '/compact'
++        if (compactRequested) {
 +          const compaction = ctx.get('compaction') as ManualCompaction | undefined
 +          if (compaction === undefined) throw internalError('manual compaction is not configured')
 +          const controller = new AbortController()
@@ -102,7 +108,7 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
 +              const usage = summaryEvent.data.usage
 +              const cacheReadTokens = usage.cacheReadTokens ?? 0
 +              const cacheWriteTokens = usage.cacheWriteTokens ?? 0
-+              notify({
++              await notify({
 +                sessionId: record.agent.session.id,
 +                update: {
 +                  sessionUpdate: 'usage_update', ...contextUsage(record.agent.session),
@@ -119,7 +125,7 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
 +            const response = result === null
 +              ? '目前还没有可压缩的历史。'
 +              : `Compact 完成：已压缩 ${result.shadowedSeqs.length} 项较早历史（约 ${result.shadowedTokenCount} tokens）。`
-+            notify({
++            await notify({
 +              sessionId: record.agent.session.id,
 +              update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: response } },
 +            })
@@ -131,29 +137,28 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
 +            throw internalError(`compact failed: ${detail}`)
 +          }
 +        }
-+
-         // Not driving a retired agent is this bridge's contract: an
-         // agent-loop-only reload disposes the loop's agents while the bridge
-         // record survives, so validate the record against the live registry
-@@ -358,6 +451,8 @@ export function apply(ctx: Context, config: AcpConfig): void {
+         const completion = Promise.withResolvers<StopReason>()
+         const admission = Promise.withResolvers<void>()
+         const admissionController = new AbortController()
+@@ -579,6 +667,8 @@ export function apply(ctx: Context, config: AcpConfig): void {
        cancel(params: CancelNotification): Promise<void> {
          const record = sessions.get(SessionId(params.sessionId))
          if (record === undefined) return Promise.resolve()
 +        compactAborts.get(record.agent.id)?.abort(new Error('Compact cancelled by user'))
 +        compactAborts.delete(record.agent.id)
-         record.agent.cancel({ kind: 'user' })
-         settlePrompt(record, 'cancelled')
-         return Promise.resolve()
-@@ -361,6 +456,8 @@ export function apply(ctx: Context, config: AcpConfig): void {
-     // Stop the bridge's own work before any await: a descendant drain can block
+         const inflight = record.inflight
+         if (inflight !== undefined) {
+           inflight.cancelRequested = true
+@@ -611,6 +701,8 @@ export function apply(ctx: Context, config: AcpConfig): void {
      // on persistence or scoped cleanup, and the top-level agents must not keep
      // running model and tool calls for its whole duration.
      for (const record of records) {
 +      compactAborts.get(record.agent.id)?.abort(new Error('ACP connection closed'))
 +      compactAborts.delete(record.agent.id)
-       record.agent.cancel({ kind: 'user' })
-       settlePrompt(record, 'cancelled')
-@@ -430,10 +527,10 @@ function agentOptions(config: AcpConfig): { provider?: string; model?: string } {
+       const inflight = record.inflight
+       if (inflight !== undefined) {
+         inflight.cancelRequested = true
+@@ -690,10 +782,10 @@ function agentOptions(config: AcpConfig): { provider?: string; model?: string }
  }
  
  /** Reject session features outside the automation contract. */

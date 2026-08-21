@@ -19,7 +19,8 @@ $acpPatches = @(
     (Join-Path $PSScriptRoot 'patches\acp-resume-compact.patch'),
     (Join-Path $PSScriptRoot 'patches\acp-steer.patch'),
     (Join-Path $PSScriptRoot 'patches\acp-user-questions.patch'),
-    (Join-Path $PSScriptRoot 'patches\acp-dashboard.patch')
+    (Join-Path $PSScriptRoot 'patches\acp-dashboard.patch'),
+    (Join-Path $PSScriptRoot 'patches\acp-session-model.patch')
 )
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {

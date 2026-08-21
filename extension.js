@@ -46,6 +46,49 @@ const OPTIONAL_FEATURE_GROUPS = Object.freeze([
   },
 ]);
 const FEATURE_GROUP_IDS = new Set(OPTIONAL_FEATURE_GROUPS.map((item) => item.id));
+const MODEL_OPTIONS = Object.freeze([
+  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', vision: false },
+  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', vision: false },
+  { id: 'deepseek-v4-flash-vision-exp', label: 'DeepSeek V4 Flash Vision', vision: true },
+]);
+const MODEL_IDS = new Set(MODEL_OPTIONS.map((item) => item.id));
+const DEFAULT_MODEL_ID = 'deepseek-v4-pro';
+const IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+const MAX_IMAGES_PER_MESSAGE = 8;
+const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
+const MAX_MESSAGE_IMAGE_BYTES = 20 * 1024 * 1024;
+const CANONICAL_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+function normalizeModelId(value, fallback = DEFAULT_MODEL_ID) {
+  return MODEL_IDS.has(value) ? value : fallback;
+}
+
+function modelSupportsVision(modelId) {
+  return MODEL_OPTIONS.find((item) => item.id === modelId)?.vision === true;
+}
+
+/** Validate webview-supplied images into ACP prompt blocks plus display metadata. */
+function sanitizeOutgoingImages(value) {
+  const source = Array.isArray(value) ? value : [];
+  if (source.length > MAX_IMAGES_PER_MESSAGE) return { error: `一次最多发送 ${MAX_IMAGES_PER_MESSAGE} 张图片。` };
+  const blocks = [];
+  const meta = [];
+  let totalBytes = 0;
+  for (const item of source) {
+    if (!item || typeof item !== 'object') return { error: '图片数据无效。' };
+    const mimeType = String(item.mimeType || '');
+    if (!IMAGE_MIME_TYPES.has(mimeType)) return { error: '仅支持 PNG / JPEG / WebP / GIF 图片。' };
+    const data = typeof item.data === 'string' ? item.data.replace(/\s+/g, '') : '';
+    if (!data || !CANONICAL_BASE64.test(data)) return { error: '图片编码无效。' };
+    const bytes = Math.floor(data.length * 3 / 4) - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0);
+    if (bytes > MAX_IMAGE_BYTES) return { error: `单张图片超过 ${Math.floor(MAX_IMAGE_BYTES / 1024 / 1024)}MB 上限。` };
+    totalBytes += bytes;
+    if (totalBytes > MAX_MESSAGE_IMAGE_BYTES) return { error: `图片合计超过 ${Math.floor(MAX_MESSAGE_IMAGE_BYTES / 1024 / 1024)}MB 上限。` };
+    blocks.push({ type: 'image', data, mimeType });
+    meta.push({ name: boundedString(item.name, 'image', 120) || 'image', mimeType, bytes });
+  }
+  return { blocks, meta };
+}
 
 function resolveDefaultConfigRoot() {
   return DEFAULT_CONFIG_ROOT;
@@ -270,6 +313,7 @@ function sanitizeConversationState(value) {
       contextUsage: safeContextUsage(item.contextUsage),
       performance: safePerformance(item.performance),
       forkedFrom: boundedString(item.forkedFrom, '', 128) || undefined,
+      model: MODEL_IDS.has(item.model) ? item.model : undefined,
     }];
   }).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_CONVERSATIONS);
   const result = {
@@ -311,6 +355,7 @@ class DeepSeekChatController {
     this.dashboardRequests = new Set();
     this.pendingInputText = '';
     this.cancelRequested = new Set();
+    this.conversationModels = new Map();
     this.connectionState = 'disconnected';
     this.uiLanguage = normalizeLocale(this.context.globalState.get('deepseekHarness.uiLanguage', 'zh-CN'));
     this.disposables = [];
@@ -365,6 +410,9 @@ class DeepSeekChatController {
             conversations: selectedState.conversations.map((item) => ({ ...item, activeTurn: false })),
           };
           this.activeConversationId = String(savedState.activeConversationId || message.conversationId || crypto.randomUUID());
+          for (const item of savedState.conversations) {
+            if (item.model) this.conversationModels.set(item.id, item.model);
+          }
           await this.context.globalState.update('deepseekHarness.conversations', savedState);
           this.post({
             type: 'configuration',
@@ -380,7 +428,14 @@ class DeepSeekChatController {
         }
         break;
       case 'send':
-        await this.sendPrompt(String(message.text || ''), String(message.conversationId || this.activeConversationId || ''));
+        await this.sendPrompt(
+          String(message.text || ''),
+          String(message.conversationId || this.activeConversationId || ''),
+          Array.isArray(message.images) ? message.images : [],
+        );
+        break;
+      case 'setConversationModel':
+        await this.setConversationModel(String(message.conversationId || ''), String(message.model || ''));
         break;
       case 'steer':
         await this.steerConversation(String(message.text || ''), String(message.conversationId || this.activeConversationId || ''));
@@ -491,6 +546,13 @@ class DeepSeekChatController {
     const disabledFeatureGroups = normalizeDisabledFeatureGroups(this.secureSetting(config, 'disabledFeatureGroups', []));
     return {
       model: config.get('modelLabel', 'DeepSeek V4 Pro'),
+      models: MODEL_OPTIONS,
+      defaultModel: normalizeModelId(config.get('defaultModel', DEFAULT_MODEL_ID)),
+      imageLimits: {
+        maxImages: MAX_IMAGES_PER_MESSAGE,
+        maxImageBytes: MAX_IMAGE_BYTES,
+        maxMessageImageBytes: MAX_MESSAGE_IMAGE_BYTES,
+      },
       cwd: this.resolveWorkingDirectory(config),
       configRoot,
       harnessRoot: this.resolveHarnessRoot(config),
@@ -760,7 +822,8 @@ class DeepSeekChatController {
           this.post({ type: 'connectionNotice', conversationId, message: '旧对话内容已恢复，但 Harness 上下文无法接回；继续发送时将使用新的上下文。' });
         }
       }
-      const created = await this.transport.request('session/new', { cwd, mcpServers: [] });
+      const model = this.resolveConversationModel(conversationId);
+      const created = await this.transport.request('session/new', { cwd, mcpServers: [], _meta: { model } });
       this.sessionIds.set(conversationId, created.sessionId);
       this.localByBackend.set(created.sessionId, conversationId);
       this.post({
@@ -768,6 +831,7 @@ class DeepSeekChatController {
         conversationId,
         sessionId: created.sessionId,
         runtimeId: this.runtimeId,
+        model,
         modes: created.modes,
         configOptions: created.configOptions,
       });
@@ -785,6 +849,40 @@ class DeepSeekChatController {
     this.activeConversationId = conversationId;
     const sessionId = await this.startSession(conversationId, resumeSessionId);
     if (sessionId) this.post({ type: 'conversationSelected', conversationId, isNew });
+  }
+
+  resolveConversationModel(conversationId) {
+    const config = vscode.workspace.getConfiguration('deepseekHarness');
+    const fallback = normalizeModelId(config.get('defaultModel', DEFAULT_MODEL_ID));
+    return normalizeModelId(this.conversationModels.get(conversationId), fallback);
+  }
+
+  async setConversationModel(conversationId, model) {
+    if (!conversationId || !MODEL_IDS.has(model)) return;
+    if (this.turnsInProgress.has(conversationId)) {
+      this.post({ type: 'connectionNotice', conversationId, message: '请先停止当前任务，再切换模型。' });
+      return;
+    }
+    const previous = this.resolveConversationModel(conversationId);
+    this.conversationModels.set(conversationId, model);
+    this.post({ type: 'conversationModel', conversationId, model });
+    if (previous === model || !this.sessionIds.has(conversationId)) return;
+    // The Harness fixes an agent's model at session creation, so an existing
+    // conversation switches by starting a fresh session (context resets; the
+    // local chat log stays).
+    await this.restartConversationSession(conversationId);
+    this.post({ type: 'connectionNotice', conversationId, message: `已切换到 ${MODEL_OPTIONS.find((item) => item.id === model)?.label || model}，新的上下文从下一条消息开始。` });
+  }
+
+  async restartConversationSession(conversationId) {
+    const previousSessionId = this.sessionIds.get(conversationId);
+    this.sessionControls.delete(conversationId);
+    this.sessionIds.delete(conversationId);
+    if (previousSessionId) this.localByBackend.delete(previousSessionId);
+    for (const key of [...this.toolCalls.keys()]) {
+      if (key.startsWith(`${conversationId}:`)) this.toolCalls.delete(key);
+    }
+    return this.startSession(conversationId);
   }
 
   async clearConversation(conversationId) {
@@ -815,9 +913,28 @@ class DeepSeekChatController {
     this.post({ type: 'conversationCleared', conversationId, sessionId: nextSessionId, runtimeId: this.runtimeId });
   }
 
-  async sendPrompt(text, conversationId) {
+  async sendPrompt(text, conversationId, images = []) {
     const prompt = text.trim();
-    if (!prompt || !conversationId || this.turnsInProgress.has(conversationId)) return;
+    const imageInput = Array.isArray(images) ? images : [];
+    if ((!prompt && imageInput.length === 0) || !conversationId || this.turnsInProgress.has(conversationId)) return;
+    let imageBlocks = [];
+    let imageMeta = [];
+    if (imageInput.length > 0) {
+      const model = this.resolveConversationModel(conversationId);
+      if (!modelSupportsVision(model)) {
+        this.post({ type: 'connectionNotice', conversationId, message: '当前模型不支持图片，请切换到 Vision 模型后重试。' });
+        if (prompt) this.post({ type: 'restoreInput', conversationId, text: prompt });
+        return;
+      }
+      const admitted = sanitizeOutgoingImages(imageInput);
+      if (admitted.error) {
+        this.post({ type: 'connectionNotice', conversationId, message: admitted.error });
+        if (prompt) this.post({ type: 'restoreInput', conversationId, text: prompt });
+        return;
+      }
+      imageBlocks = admitted.blocks;
+      imageMeta = admitted.meta;
+    }
     this.activeConversationId = conversationId;
     const sessionId = await this.startSession(conversationId);
     if (!this.transport || !sessionId) return;
@@ -825,12 +942,12 @@ class DeepSeekChatController {
     this.turnsInProgress.add(conversationId);
     this.scheduleTurnStallCheck(conversationId);
     await vscode.commands.executeCommand('setContext', 'deepseekHarness.turnInProgress', true);
-    this.post({ type: 'userMessage', conversationId, text: prompt });
+    this.post({ type: 'userMessage', conversationId, text: prompt, ...(imageMeta.length ? { images: imageMeta } : {}) });
     this.post({ type: 'turnState', conversationId, active: true });
     try {
       const result = await this.transport.request('session/prompt', {
         sessionId,
-        prompt: [{ type: 'text', text: prompt }],
+        prompt: [...imageBlocks, ...(prompt ? [{ type: 'text', text: prompt }] : [])],
       }, 0);
       this.post({ type: 'turnComplete', conversationId, stopReason: result?.stopReason, usage: result?.usage });
     } catch (error) {
@@ -1624,6 +1741,7 @@ class DeepSeekChatController {
   <footer class="composer-shell">
     <div class="composer">
       <div id="fileSuggestions" class="file-suggestions" hidden></div>
+      <div id="imageChips" class="image-chips" hidden></div>
       <textarea id="input" rows="1" placeholder="向 DeepSeek Harness 提出任务…"></textarea>
       <div class="composer-bottom">
         <div class="composer-left">
@@ -1652,6 +1770,11 @@ class DeepSeekChatController {
             </div>
           </section>
         </div>
+        <input id="imageFileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
+        <button id="attachImage" class="icon-button attach-button" title="添加图片（仅 Vision 模型支持）" hidden>🖼</button>
+        <label class="composer-model-wrap" title="会话模型">
+          <select id="composerModel" class="composer-approval-select" aria-label="会话模型"></select>
+        </label>
         <label class="composer-approval-wrap" title="工具权限模式">
           <select id="composerApprovalMode" class="composer-approval-select" aria-label="工具权限模式">
             <option value="manual">手动审核</option>

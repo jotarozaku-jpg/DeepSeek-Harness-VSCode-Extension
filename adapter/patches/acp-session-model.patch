@@ -1,0 +1,112 @@
+diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
+index 53d8e29799..6f40838323 100644
+--- a/packages/acp/acp/src/index.ts
++++ b/packages/acp/acp/src/index.ts
+@@ -131,6 +131,8 @@ export const Config: Schema<AcpConfig> = Schema.object({
+ /** Per-session protocol state. */
+ interface SessionRecord {
+   agent: Agent
++  /** Whether this session's exact model route admits inline image prompts. */
++  imageEnabled: boolean
+   /** Exact owned-agent disposer; resolves after registry, loop, and session teardown. */
+   dispose: () => Promise<void>
+   /** Ordered assistant-output delivery; every task contains its own failure. */
+@@ -537,7 +539,11 @@ export function apply(ctx: Context, config: AcpConfig): void {
+       async initialize(_params: InitializeRequest): Promise<InitializeResponse> {
+         // Single-version agent: the spec's "same version if supported, else
+         // the latest supported" both resolve to this server's one version.
+-        imagePromptEnabled = await supportsAcpImagePrompts(ctx, config.provider, config.model)
++        // Session models are client-selectable, so the connection-level
++        // capability only reflects the mounted attachment store; each
++        // session's exact model route is enforced at admission time.
++        imagePromptEnabled = (ctx as Context & { get(name: string): unknown }).get('attachments') !== undefined
++          || await supportsAcpImagePrompts(ctx, config.provider, config.model)
+         return {
+           protocolVersion: PROTOCOL_VERSION,
+           agentInfo: { name: 'deepseek-harness-acp', version: '0.0.1' },
+@@ -556,6 +562,7 @@ export function apply(ctx: Context, config: AcpConfig): void {
+       async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
+         assertOpen()
+         validateSessionParams(params)
++        const sessionModel = sessionModelOverride(params)
+         const sessionId = SessionId(randomUUID())
+         // No preset composition: the ACP bundle keeps the model-facing rows in
+         // the host plane, so this agent reads them from the global layer. A
+@@ -564,8 +571,16 @@ export function apply(ctx: Context, config: AcpConfig): void {
+         const handle = await agents.create({
+           sessionId,
+           meta: { cwd: params.cwd },
+-          agentOptions: agentOptions(config),
++          agentOptions: {
++            ...agentOptions(config),
++            ...(sessionModel === undefined ? {} : { model: sessionModel }),
++          },
+         })
++        const imageEnabled = await supportsAcpImagePrompts(
++          ctx,
++          handle.agent.options.provider ?? config.provider,
++          handle.agent.options.model ?? config.model,
++        )
+         /* v8 ignore next 4 -- a real stdio close can race an in-flight create. */
+         if (closed) {
+           await handle.dispose()
+@@ -573,6 +588,7 @@ export function apply(ctx: Context, config: AcpConfig): void {
+         }
+         sessions.set(sessionId, {
+           agent: handle.agent,
++          imageEnabled,
+           dispose: () => handle.dispose(),
+           outputTail: Promise.resolve(),
+           inflight: undefined,
+@@ -594,6 +610,11 @@ export function apply(ctx: Context, config: AcpConfig): void {
+           await handle.dispose()
+           throw invalidParams(`cwd does not match persisted session: ${params.cwd}`)
+         }
++        const imageEnabled = await supportsAcpImagePrompts(
++          ctx,
++          handle.agent.options.provider ?? config.provider,
++          handle.agent.options.model ?? config.model,
++        )
+         /* v8 ignore next 4 -- a real stdio close can race an in-flight resume. */
+         if (closed) {
+           await handle.dispose()
+@@ -601,6 +622,7 @@ export function apply(ctx: Context, config: AcpConfig): void {
+         }
+         sessions.set(sessionId, {
+           agent: handle.agent,
++          imageEnabled,
+           dispose: () => handle.dispose(),
+           outputTail: Promise.resolve(),
+           inflight: undefined,
+@@ -697,7 +719,7 @@ export function apply(ctx: Context, config: AcpConfig): void {
+             ctx,
+             record.agent,
+             params.prompt,
+-            imagePromptEnabled,
++            record.imageEnabled,
+             admissionController.signal,
+           )
+           // No await may separate this final abort check from followup: a
+@@ -919,6 +941,22 @@ function agentOptions(config: AcpConfig): { provider?: string; model?: string }
+   }
+ }
+ 
++/**
++ * Read the client's per-session model override from `_meta.model`.
++ * The id shape is validated here; existence on the provider route is
++ * enforced by agent creation and image admission.
++ */
++function sessionModelOverride(params: NewSessionRequest): string | undefined {
++  const meta = (params as { _meta?: unknown })._meta
++  if (typeof meta !== 'object' || meta === null) return undefined
++  const model = (meta as { model?: unknown }).model
++  if (model === undefined) return undefined
++  if (typeof model !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(model)) {
++    throw invalidParams('_meta.model must be a short provider model id')
++  }
++  return model
++}
++
+ /** Reject session features outside the automation contract. */
+ function validateSessionParams(params: NewSessionRequest | ResumeSessionRequest): void {
+   if (!isAbsolute(params.cwd)) throw invalidParams(`cwd must be an absolute path: ${params.cwd}`)

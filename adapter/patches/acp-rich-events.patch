@@ -1,18 +1,19 @@
 diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
+index 7be2a2bda6..86aefa6226 100644
 --- a/packages/acp/acp/src/index.ts
 +++ b/packages/acp/acp/src/index.ts
-@@ -30,6 +30,10 @@ import {
-   type PromptRequest,
-   type PromptResponse,
+@@ -32,6 +32,10 @@ import {
    type SessionNotification,
+   type StopReason,
+   type Stream,
 +  type ToolCall,
 +  type ToolCallContent,
 +  type ToolCallUpdate,
 +  type ToolKind,
-   type StopReason,
-   type Stream,
  } from '@agentclientprotocol/sdk'
-@@ -127,6 +131,105 @@ export function apply(ctx: Context, config: AcpConfig): void {
+ import type { Agent } from '@deepseek-ai/dsh-agent'
+ import { SessionId, type SessionEvent, type TurnEndReason } from '@deepseek-ai/dsh-session'
+@@ -144,6 +148,105 @@ export function apply(ctx: Context, config: AcpConfig): void {
      return record
    }
  
@@ -115,28 +116,29 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
 +    }
 +  }
 +
-   /** Send a protocol update without letting a disconnected client fail an agent turn. */
-   const notify = (notification: SessionNotification): void => {
-     /* v8 ignore next 3 -- only a transport write failure reaches this guard. */
-@@ -149,9 +252,8 @@ export function apply(ctx: Context, config: AcpConfig): void {
-     inflight.reject(internalError(`turn failed: ${reason.error.message}`))
+   /** Send one ordered protocol update while containing transport-only failure. */
+   const notify = async (notification: SessionNotification): Promise<void> => {
+     try {
+@@ -215,9 +318,9 @@ export function apply(ctx: Context, config: AcpConfig): void {
+     /* v8 ignore stop */
    }
  
--  // Emit only committed assistant text. Raw chunks, reasoning, tools, plans,
--  // titles, and retry markers are presentation or trace data and stay off the
--  // automation wire.
-+  // Rich-client bridge: retain committed assistant text while also exposing
-+  // model-provided reasoning and the Harness tool lifecycle over standard ACP updates.
+-  // Emit only committed assistant text/images. Raw chunks, reasoning, tools,
+-  // plans, titles, and retry markers are presentation or trace data and stay
+-  // off the automation wire. One per-session chain preserves block/message
++  // Rich-client bridge: retain committed assistant text/images while also
++  // exposing model-provided reasoning and the Harness tool lifecycle over
++  // standard ACP updates. One per-session chain preserves block/message
+   // order across asynchronous attachment reads.
    ctx.on('session/event', (session, event: SessionEvent) => {
      const record = sessions.get(session.header.id)
-     if (record === undefined || record.agent.session !== session) return
-@@ -179,6 +281,57 @@ export function apply(ctx: Context, config: AcpConfig): void {
-             })
-           }
-         }
+@@ -242,6 +345,57 @@ export function apply(ctx: Context, config: AcpConfig): void {
+           if (inflight !== undefined) inflight.outputError ??= failure
+           logger.warn(`acp: assistant output conversion failed: ${errorChain(error)}`)
+         })
 +      } else if (event.type === 'assistant/chunk' && event.data.chunk.type === 'reasoning-delta') {
 +        if (event.data.chunk.text.length > 0) {
-+          notify({
++          void notify({
 +            sessionId: record.agent.session.id,
 +            update: {
 +              sessionUpdate: 'agent_thought_chunk',
@@ -150,7 +152,7 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
 +        const cacheWriteTokens = usage.cacheWriteTokens ?? 0
 +        const inputTokens = usage.inputTokens + cacheReadTokens + cacheWriteTokens
 +        const context = contextUsage(record.agent.session, inputTokens)
-+        notify({
++        void notify({
 +          sessionId: record.agent.session.id,
 +          update: {
 +            sessionUpdate: 'usage_update',
@@ -168,17 +170,17 @@ diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
 +          },
 +        })
 +      } else if (event.type === 'tool/call') {
-+        notify({
++        void notify({
 +          sessionId: record.agent.session.id,
 +          update: { sessionUpdate: 'tool_call', ...callView(event.data.name, event.data.arguments, String(event.data.callId)) },
 +        })
 +      } else if (event.type === 'tool/result') {
-+        notify({
++        void notify({
 +          sessionId: record.agent.session.id,
 +          update: { sessionUpdate: 'tool_call_update', ...resultUpdate(event) },
 +        })
 +      } else if (event.type === 'todo/write') {
-+        notify({
++        void notify({
 +          sessionId: record.agent.session.id,
 +          update: {
 +            sessionUpdate: 'plan',

@@ -15,6 +15,14 @@
     models:
       - id: deepseek-v4-flash
       - id: deepseek-v4-pro
+      - id: deepseek-v4-flash-vision-exp
+        inputModalities: [text, image]
+
+# Durable image store for inline image prompts (vision model conversations).
+- id: attachment-local
+  name: '@deepseek-ai/dsh-attachment-local'
+  config:
+    dshHome: !!js process.env.DSH_HOME
 
 - id: sandbox
   name: '@deepseek-ai/dsh-sandbox-local'

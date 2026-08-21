@@ -6,6 +6,16 @@
 
 > 状态：早期预览。DeepSeek Harness 本身仍处于开发者预览阶段；在上游 ACP 入口趋于稳定之前，本扩展暂时使用固定版本的小型兼容适配层。
 
+## 0.8.0 更新
+
+- **图片输入（Vision）**：DeepSeek 上线 [Vision API](https://api-docs.deepseek.com/guides/vision) 后，`deepseek-v4-flash-vision-exp` 会话可以直接粘贴或附加图片（PNG / JPEG / WebP / GIF，单张 16MB、每条消息 20MB 上限），图片经 Harness 附件存储持久化后随提示词发送
+- **会话级模型切换**：输入框旁新增模型选择器（V4 Pro / V4 Flash / V4 Flash Vision）。每个会话可独立选择模型；已有上下文的会话切换模型时会重建 Harness 上下文（本地聊天记录保留）
+- 外部 Harness 固定版本升级到 `dsh-v0.1.1-rc.1`（`528c682e06`），全部 5 个兼容补丁已重新移植，并新增第 6 个补丁 `acp-session-model.patch`（会话级模型覆盖与逐会话图片准入）
+- Cordis 配置新增 `@deepseek-ai/dsh-attachment-local` 附件存储与 Vision 模型条目
+- 新增 `smoke:vision` 冒烟测试（模型覆盖、图片准入门控、非法模型 ID 拒绝，全部无需 API Key）
+
+从 0.7.x 更新时请重新运行 `adapter\setup.ps1`，让固定版本的外部 Harness 重新构建；脚本不会覆盖已有的 `.credentials.yaml`。旧版本 Harness 保存的会话可以在新版本中正常恢复（已验证）。
+
 ## 0.7.2 更新
 
 - 设置页新增中文、英文、日文界面切换；仅翻译扩展固定 UI，不改写 Harness、Tool Call 或错误原文
@@ -41,6 +51,8 @@
 - 结构化提问、Plan 审核卡片与斜杠命令
 - 中文、英文、日文固定界面切换
 - Goal 目标条与 Subagent 状态面板
+- 会话级模型切换（V4 Pro / V4 Flash / V4 Flash Vision）
+- Vision 会话中的图片粘贴与附加（PNG / JPEG / WebP / GIF）
 
 费用面板仅做参考估算。V4 Pro 当前官方美元价（每百万 Token）为缓存命中 `$0.003625`、未命中输入 `$0.435`、输出 `$0.87`；中文计价页对应 ¥0.025、¥3、¥6。最终账单以 DeepSeek 为准。
 
@@ -114,6 +126,16 @@ This is a standalone Visual Studio Code extension that communicates with an exte
 
 > Status: early preview. DeepSeek Harness itself is currently a developer preview, and this extension uses a pinned compatibility adapter while the upstream ACP entry point is still evolving.
 
+### What is new in 0.8.0
+
+- **Image input (Vision)**: with the DeepSeek [Vision API](https://api-docs.deepseek.com/guides/vision) live, `deepseek-v4-flash-vision-exp` conversations accept pasted or attached images (PNG / JPEG / WebP / GIF, 16MB per image, 20MB per message). Images persist through the Harness attachment store and travel with the prompt
+- **Per-conversation model switching**: a model picker (V4 Pro / V4 Flash / V4 Flash Vision) now sits beside the composer. Each conversation selects its own model; switching a conversation that already has context starts a fresh Harness context (the local chat log is kept)
+- The pinned external Harness moved to `dsh-v0.1.1-rc.1` (`528c682e06`); all five compatibility patches were re-ported and a sixth patch `acp-session-model.patch` adds per-session model overrides with per-session image admission
+- The bundled Cordis composition now mounts `@deepseek-ai/dsh-attachment-local` and registers the vision model
+- Added a `smoke:vision` test covering model overrides, image admission gating and malformed-model rejection, all without an API key
+
+When updating from 0.7.x, rerun `adapter\setup.ps1` so the pinned external Harness is rebuilt. The script does not overwrite an existing `.credentials.yaml`. Sessions persisted by the previous pin resume correctly on the new build (verified).
+
 ### What is new in 0.7.2
 
 - Added Chinese, English and Japanese UI switching. Only extension-owned chrome is translated; Harness, tool-call and error payloads remain verbatim
@@ -149,6 +171,8 @@ When updating from 0.6.x, rerun `adapter\setup.ps1` so the pinned external Harne
 - Structured questions, Plan review cards and slash commands
 - Chinese, English and Japanese fixed-UI switching
 - Goal and Subagent status dashboards
+- Per-conversation model switching (V4 Pro / V4 Flash / V4 Flash Vision)
+- Image paste and attach in Vision conversations (PNG / JPEG / WebP / GIF)
 
 Cost figures are estimates only. Current official V4 Pro rates per million tokens are `$0.003625` cache hit, `$0.435` cache-miss input and `$0.87` output; the Chinese pricing page lists ¥0.025, ¥3 and ¥6 respectively. DeepSeek billing remains authoritative.
 

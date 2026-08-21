@@ -1,7 +1,8 @@
 diff --git a/packages/acp/acp/src/index.ts b/packages/acp/acp/src/index.ts
+index 1f5baa76b2..d6ed6f42df 100644
 --- a/packages/acp/acp/src/index.ts
 +++ b/packages/acp/acp/src/index.ts
-@@ -338,6 +338,28 @@ export function apply(ctx: Context, config: AcpConfig): void {
+@@ -664,6 +664,28 @@ export function apply(ctx: Context, config: AcpConfig): void {
          return { stopReason }
        },
  

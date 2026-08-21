@@ -2,7 +2,7 @@
   "name": "deepseek-harness-vscode",
   "displayName": "DeepSeek Harness for VS Code",
   "description": "An unofficial VS Code client for DeepSeek Harness over ACP.",
-  "version": "0.7.2",
+  "version": "0.8.0",
   "publisher": "community",
   "license": "MIT",
   "repository": {
@@ -121,6 +121,17 @@
           "default": "DeepSeek V4 Pro",
           "description": "Model label displayed in the chat header."
         },
+        "deepseekHarness.defaultModel": {
+          "type": "string",
+          "enum": ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"],
+          "enumDescriptions": [
+            "DeepSeek V4 Pro (text only).",
+            "DeepSeek V4 Flash (text only).",
+            "DeepSeek V4 Flash Vision Exp (accepts image input)."
+          ],
+          "default": "deepseek-v4-pro",
+          "description": "Model used for newly created conversations. Each conversation can override this from the composer."
+        },
         "deepseekHarness.approvalMode": {
           "type": "string",
           "enum": ["manual", "sandbox", "full-access"],
@@ -168,12 +179,15 @@
   },
   "scripts": {
     "check": "node --check extension.js && node --check src/acpTransport.js && node --check src/security.js && node --check media/i18n.js && node --check media/main.js && node --check adapter/acp-bridge.mjs && node --check adapter/runtime-feature-filter.mjs",
+    "smoke:acp": "node tests/smoke-acp.js",
     "smoke:approval": "node tests/smoke-approval-mode.mjs",
     "smoke:auto-approval": "node tests/smoke-auto-approval.mjs",
-    "smoke:security": "node tests/smoke-security.js",
+    "smoke:compact": "node tests/smoke-compact.js",
     "smoke:feature-groups": "node tests/smoke-feature-groups.mjs",
-    "smoke:ui-features": "node tests/smoke-ui-features.mjs",
+    "smoke:git": "node tests/smoke-git.mjs",
     "smoke:i18n": "node tests/smoke-i18n.mjs",
+    "smoke:resume": "node tests/smoke-resume.js",
+    "smoke:vision": "node tests/smoke-vision.mjs",
     "prepackage": "node scripts/prepare-package.js",
     "package": "npx --yes @vscode/vsce@latest package --out dist/deepseek-harness-vscode.vsix"
   }

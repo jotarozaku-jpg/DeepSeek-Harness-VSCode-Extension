@@ -48,6 +48,10 @@ const showArchived = document.getElementById('showArchived');
 const conversationTitle = document.getElementById('conversationTitle');
 const approvalMode = document.getElementById('approvalMode');
 const composerApprovalMode = document.getElementById('composerApprovalMode');
+const composerModel = document.getElementById('composerModel');
+const attachImage = document.getElementById('attachImage');
+const imageFileInput = document.getElementById('imageFileInput');
+const imageChips = document.getElementById('imageChips');
 const autoAllowRead = document.getElementById('autoAllowRead');
 const thoughtDisplay = document.getElementById('thoughtDisplay');
 const uiLanguage = document.getElementById('uiLanguage');
@@ -136,6 +140,11 @@ let fileMentionRange;
 let slashCommandRange;
 let managementConfiguration = {};
 let managedFeatureGroups = [];
+let availableModels = [];
+let defaultModelId = 'deepseek-v4-pro';
+let imageLimits = { maxImages: 8, maxImageBytes: 16 * 1024 * 1024, maxMessageImageBytes: 20 * 1024 * 1024 };
+const draftImagesByConversation = new Map();
+const IMAGE_MIME_SET = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const renderedEntryLimits = new Map();
 const MAX_STORED_CONVERSATIONS = 50;
 const MAX_STORED_ENTRIES = 500;
@@ -273,7 +282,37 @@ function normalizeConversation(item) {
     subagents: normalizeSubagents(item?.subagents),
     turnTelemetry: undefined,
     forkedFrom: item?.forkedFrom,
+    model: typeof item?.model === 'string' ? item.model : undefined,
   };
+}
+
+function conversationModelId(item) {
+  return item?.model || defaultModelId;
+}
+
+function modelInfo(modelId) {
+  return availableModels.find((candidate) => candidate.id === modelId);
+}
+
+function conversationSupportsVision(item) {
+  return modelInfo(conversationModelId(item))?.vision === true;
+}
+
+function currentDraftImages() {
+  const id = current().id;
+  if (!draftImagesByConversation.has(id)) draftImagesByConversation.set(id, []);
+  return draftImagesByConversation.get(id);
+}
+
+function populateModelSelect() {
+  composerModel.replaceChildren();
+  for (const model of availableModels) {
+    const option = document.createElement('option');
+    option.value = model.id;
+    option.textContent = model.vision ? `${model.label} 🖼` : model.label;
+    option.setAttribute('data-i18n-skip', '');
+    composerModel.appendChild(option);
+  }
 }
 
 function ensureConversation(id = activeConversationId) {
@@ -712,7 +751,16 @@ function renderQuestionEntry(entry) {
 function renderEntry(entry) {
   if (entry.type === 'user') {
     const row = make('article', 'message user-message');
-    row.appendChild(make('div', `user-bubble${entry.steering ? ' steering-bubble' : ''}`, entry.text));
+    const bubble = make('div', `user-bubble${entry.steering ? ' steering-bubble' : ''}`, entry.text);
+    if (Array.isArray(entry.images) && entry.images.length) {
+      const chips = make('div', 'user-image-chips');
+      for (const image of entry.images) {
+        const size = image.bytes ? ` · ${Math.max(1, Math.round(image.bytes / 1024))}KB` : '';
+        chips.appendChild(make('span', 'user-image-chip', `🖼 ${image.name}${size}`));
+      }
+      bubble.appendChild(chips);
+    }
+    row.appendChild(bubble);
     return row;
   }
   if (entry.type === 'assistant') {
@@ -1224,6 +1272,12 @@ function render(forceScroll = false) {
   send.title = activeTurn ? '排队发送（Ctrl+Enter 立即插话）' : '发送';
   send.setAttribute('aria-label', send.title);
   send.classList.toggle('queue-button', activeTurn);
+  if (composerModel.options.length > 0) composerModel.value = conversationModelId(item);
+  composerModel.disabled = busy;
+  const activeModel = modelInfo(conversationModelId(item));
+  if (activeModel) modelLabel.textContent = activeModel.label;
+  attachImage.hidden = !conversationSupportsVision(item);
+  renderImageChips();
   if (cancelState === 'requested') composerHint.textContent = '正在等待 Harness 确认停止…';
   else if (cancelState === 'escalated') composerHint.textContent = 'Harness 尚未确认停止';
   else if (cancelState === 'stopped') composerHint.textContent = 'Harness 已确认结束本轮任务';
@@ -1459,15 +1513,20 @@ function executeSlashCommand(text, item) {
 
 function submit(options = {}) {
   const text = input.value.trim();
-  if (!text || compactActive) return;
+  const images = currentDraftImages();
+  if ((!text && images.length === 0) || compactActive) return;
   const item = current();
-  if (!item.activeTurn && executeSlashCommand(text, item)) {
+  if (text && !item.activeTurn && executeSlashCommand(text, item)) {
     input.value = '';
     resizeInput();
     fileSuggestions.hidden = true;
     return;
   }
-  if (item.title === '新对话') item.title = text.replace(/\s+/g, ' ').slice(0, 36) || '新对话';
+  if (item.activeTurn && images.length > 0) {
+    composerHint.textContent = tr('带图片的消息不能排队或插话，请等当前任务结束后发送。');
+    return;
+  }
+  if (item.title === '新对话') item.title = (text || (images[0]?.name ?? '')).replace(/\s+/g, ' ').slice(0, 36) || '新对话';
   input.value = '';
   resizeInput();
   fileSuggestions.hidden = true;
@@ -1476,8 +1535,68 @@ function submit(options = {}) {
   if (item.activeTurn) {
     vscode.postMessage({ type: options.steer === true ? 'steerQueued' : 'enqueuePrompt', conversationId: item.id, queueId: uid(), text });
   } else {
-    vscode.postMessage({ type: 'send', conversationId: item.id, text });
+    const payloadImages = images.map(({ name, mimeType, data }) => ({ name, mimeType, data }));
+    draftImagesByConversation.set(item.id, []);
+    renderImageChips();
+    vscode.postMessage({
+      type: 'send', conversationId: item.id, text,
+      ...(payloadImages.length ? { images: payloadImages } : {}),
+    });
   }
+}
+
+function renderImageChips() {
+  const images = currentDraftImages();
+  imageChips.replaceChildren();
+  imageChips.hidden = images.length === 0;
+  images.forEach((image, index) => {
+    const chip = make('span', 'image-chip');
+    const thumb = document.createElement('img');
+    thumb.src = image.dataUrl;
+    thumb.alt = image.name;
+    const label = make('span', 'image-chip-name', `${image.name} · ${Math.max(1, Math.round(image.bytes / 1024))}KB`);
+    const remove = make('button', 'image-chip-remove', '×');
+    remove.type = 'button';
+    remove.title = tr('移除图片');
+    remove.addEventListener('click', () => {
+      images.splice(index, 1);
+      renderImageChips();
+    });
+    chip.append(thumb, label, remove);
+    imageChips.appendChild(chip);
+  });
+}
+
+function addDraftImageFile(file) {
+  if (!file || !IMAGE_MIME_SET.has(file.type)) return;
+  const item = current();
+  if (!conversationSupportsVision(item)) {
+    composerHint.textContent = tr('当前模型不支持图片，请先切换到 Vision 模型。');
+    return;
+  }
+  const images = currentDraftImages();
+  if (images.length >= imageLimits.maxImages) {
+    composerHint.textContent = `一次最多发送 ${imageLimits.maxImages} 张图片。`;
+    return;
+  }
+  if (file.size > imageLimits.maxImageBytes) {
+    composerHint.textContent = `单张图片超过 ${Math.floor(imageLimits.maxImageBytes / 1024 / 1024)}MB 上限。`;
+    return;
+  }
+  const totalBytes = images.reduce((sum, image) => sum + image.bytes, 0) + file.size;
+  if (totalBytes > imageLimits.maxMessageImageBytes) {
+    composerHint.textContent = `图片合计超过 ${Math.floor(imageLimits.maxMessageImageBytes / 1024 / 1024)}MB 上限。`;
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = String(reader.result || '');
+    const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+    if (!base64) return;
+    images.push({ name: file.name || 'image', mimeType: file.type, bytes: file.size, data: base64, dataUrl });
+    renderImageChips();
+  };
+  reader.readAsDataURL(file);
 }
 
 function resizeInput() {
@@ -1486,6 +1605,34 @@ function resizeInput() {
 }
 
 send.addEventListener('click', (event) => submit({ steer: event.ctrlKey || event.metaKey }));
+attachImage.addEventListener('click', () => imageFileInput.click());
+imageFileInput.addEventListener('change', () => {
+  for (const file of imageFileInput.files || []) addDraftImageFile(file);
+  imageFileInput.value = '';
+});
+input.addEventListener('paste', (event) => {
+  const files = [...(event.clipboardData?.items || [])]
+    .filter((entry) => entry.kind === 'file')
+    .map((entry) => entry.getAsFile())
+    .filter((file) => file && IMAGE_MIME_SET.has(file.type));
+  if (!files.length) return;
+  event.preventDefault();
+  for (const file of files) addDraftImageFile(file);
+});
+composerModel.addEventListener('change', () => {
+  const item = current();
+  const model = composerModel.value;
+  if (!model || model === conversationModelId(item)) return;
+  if (item.sessionId && item.entries.length > 0 && !globalThis.confirm(tr('切换模型会重置 Harness 上下文（聊天记录保留）。继续？'))) {
+    composerModel.value = conversationModelId(item);
+    return;
+  }
+  item.model = model;
+  if (modelInfo(model)?.vision !== true) draftImagesByConversation.set(item.id, []);
+  vscode.postMessage({ type: 'setConversationModel', conversationId: item.id, model });
+  render();
+  persist();
+});
 cancel.addEventListener('click', () => vscode.postMessage({ type: 'cancel', conversationId: activeConversationId }));
 compact.addEventListener('click', requestCompact);
 newSession.addEventListener('click', createConversation);
@@ -1719,6 +1866,22 @@ window.addEventListener('message', ({ data }) => {
     case 'configuration': {
       applyUiLanguage(data.uiLanguage || 'zh-CN', false);
       modelLabel.textContent = data.model || 'DeepSeek';
+      if (Array.isArray(data.models) && data.models.length) {
+        availableModels = data.models.map((model) => ({
+          id: String(model.id || ''),
+          label: String(model.label || model.id || ''),
+          vision: model.vision === true,
+        })).filter((model) => model.id);
+        populateModelSelect();
+      }
+      if (typeof data.defaultModel === 'string' && data.defaultModel) defaultModelId = data.defaultModel;
+      if (data.imageLimits && typeof data.imageLimits === 'object') {
+        imageLimits = {
+          maxImages: tokenCount(data.imageLimits.maxImages) || imageLimits.maxImages,
+          maxImageBytes: tokenCount(data.imageLimits.maxImageBytes) || imageLimits.maxImageBytes,
+          maxMessageImageBytes: tokenCount(data.imageLimits.maxMessageImageBytes) || imageLimits.maxMessageImageBytes,
+        };
+      }
       workspaceBar.textContent = data.cwd || '';
       workspaceBar.title = `配置：${data.configRoot || ''}`;
       setApprovalModeControls(data.approvalMode || 'manual');
@@ -1741,6 +1904,7 @@ window.addEventListener('message', ({ data }) => {
     case 'session':
       item.sessionId = data.sessionId;
       item.runtimeId = data.runtimeId;
+      if (typeof data.model === 'string' && data.model) item.model = data.model;
       item.modes = data.modes;
       item.configOptions = Array.isArray(data.configOptions) ? data.configOptions : [];
       runtimeId = data.runtimeId || runtimeId;
@@ -1769,9 +1933,24 @@ window.addEventListener('message', ({ data }) => {
     case 'createConversationRequest': createConversation(); break;
     case 'userMessage':
       closeStreams(item);
-      item.entries.push({ type: 'user', text: data.text, steering: Boolean(data.steering) });
+      item.entries.push({
+        type: 'user',
+        text: data.text,
+        steering: Boolean(data.steering),
+        ...(Array.isArray(data.images) && data.images.length ? {
+          images: data.images.slice(0, 16).map((image) => ({
+            name: String(image?.name || 'image').slice(0, 120),
+            bytes: tokenCount(image?.bytes),
+          })),
+        } : {}),
+      });
       item.updatedAt = Date.now();
       render();
+      break;
+    case 'conversationModel':
+      if (typeof data.model === 'string' && data.model) item.model = data.model;
+      render();
+      persist();
       break;
     case 'sessionUpdate': handleUpdate(data.conversationId, data.update); break;
     case 'dashboardState':
