@@ -28,7 +28,7 @@
 - 会话列表支持标题/内容搜索（最多 20 项）、归档与 Fork。当前 ACP 没有原生会话 Fork，因此 Fork 会复制可见记录，并启动一个新的独立 Harness 会话
 - 新增结构化提问与 Plan 审核卡片；Harness 可以在继续执行前等待单选、多选或自定义回答
 - 输入 `/` 可打开斜杠菜单；支持 `/compact`、`/clear`、`/new`、`/history`、`/archive`、`/fork`、`/plan`、`/code`、`/settings` 和 `/help`
-- 用量估算更新为 DeepSeek V4 Pro 当前官方美元单价
+- 用量估算按每次用量发生时的模型与 UTC 峰值／非峰值时段分别累计；切换模型不会重算此前费用
 
 功能组开关只控制仓库随附 Cordis 配置中已经存在的组件，不会自动下载或删除外部插件代码。
 
@@ -52,9 +52,9 @@
 - 中文、英文、日文固定界面切换
 - Goal 目标条与 Subagent 状态面板
 - 会话级模型切换（V4 Pro / V4 Flash / V4 Flash Vision）
-- Vision 会话中的图片粘贴与附加（PNG / JPEG / WebP / GIF）
+- Vision 会话中的图片粘贴与附加（PNG / JPEG / WebP / GIF）；发送后在用户消息中显示缩略图，点击可查看当前窗口中的原图
 
-费用面板仅做参考估算。V4 Pro 当前官方美元价（每百万 Token）为缓存命中 `$0.003625`、未命中输入 `$0.435`、输出 `$0.87`；中文计价页对应 ¥0.025、¥3、¥6。最终账单以 DeepSeek 为准。
+费用面板仅做参考估算。当前官方美元价（每百万 Token）为：Flash / Vision 在非峰值时段 `$0.007 / $0.22 / $0.66`、峰值时段 `$0.014 / $0.44 / $1.32`；Pro 在非峰值时段 `$0.022 / $0.66 / $1.98`、峰值时段 `$0.044 / $1.32 / $3.96`（依次为缓存命中／未命中输入／输出）。峰值时段为 UTC 01:00–04:00 与 06:00–10:00。产品价格可能调整，最终账单以 [DeepSeek 官方价格页](https://api-docs.deepseek.com/quick_start/pricing) 为准。
 
 ## ACP 是什么，以及本项目如何使用它
 
@@ -148,7 +148,7 @@ When updating from 0.7.x, rerun `adapter\setup.ps1` so the pinned external Harne
 - Session history now supports title/content search (up to 20 results), archive and Fork. ACP has no native session-fork method, so Fork copies visible records and starts a separate Harness session
 - Added structured single-choice, multiple-choice, custom-answer and Plan-review cards that can pause Harness until answered
 - Typing `/` opens a command menu for `/compact`, `/clear`, `/new`, `/history`, `/archive`, `/fork`, `/plan`, `/code`, `/settings` and `/help`
-- Usage estimates now use the current official DeepSeek V4 Pro USD rates
+- Usage estimates are accumulated by the model and UTC peak/off-peak tier active for each usage event, so switching models does not reprice earlier usage
 
 Feature-group switches only control components already present in the bundled Cordis configuration. They never download or remove external plugin code.
 
@@ -172,9 +172,9 @@ When updating from 0.6.x, rerun `adapter\setup.ps1` so the pinned external Harne
 - Chinese, English and Japanese fixed-UI switching
 - Goal and Subagent status dashboards
 - Per-conversation model switching (V4 Pro / V4 Flash / V4 Flash Vision)
-- Image paste and attach in Vision conversations (PNG / JPEG / WebP / GIF)
+- Image paste and attach in Vision conversations (PNG / JPEG / WebP / GIF), with sent-image thumbnails that open the original while the current webview remains alive
 
-Cost figures are estimates only. Current official V4 Pro rates per million tokens are `$0.003625` cache hit, `$0.435` cache-miss input and `$0.87` output; the Chinese pricing page lists ¥0.025, ¥3 and ¥6 respectively. DeepSeek billing remains authoritative.
+Cost figures are estimates only. Current official USD rates per million tokens are `$0.007 / $0.22 / $0.66` off-peak and `$0.014 / $0.44 / $1.32` peak for Flash / Vision, and `$0.022 / $0.66 / $1.98` off-peak and `$0.044 / $1.32 / $3.96` peak for Pro (cache-hit input / cache-miss input / output). Peak hours are 01:00–04:00 and 06:00–10:00 UTC. Prices may change; the [official DeepSeek pricing page](https://api-docs.deepseek.com/quick_start/pricing) and actual bill remain authoritative.
 
 ### What ACP is and how this project uses it
 

@@ -12,6 +12,9 @@
   config:
     thinking: enabled
     reasoningEffort: max
+    # 20 MiB raw image batches expand to at most ~26.7 MiB of base64. Keep
+    # enough room below DeepSeek's current 48 MiB request-body limit.
+    maxRequestImageBytes: 33554432
     models:
       - id: deepseek-v4-flash
       - id: deepseek-v4-pro
@@ -23,6 +26,12 @@
   name: '@deepseek-ai/dsh-attachment-local'
   config:
     dshHome: !!js process.env.DSH_HOME
+    # Keep server admission identical to the limits advertised by the VS Code UI.
+    maxImageBytes: 16777216
+    maxImagesPerMessage: 8
+    maxMessageImageBytes: 20971520
+    maxImagePixels: 67108864
+    maxImageDimension: 8192
 
 - id: sandbox
   name: '@deepseek-ai/dsh-sandbox-local'

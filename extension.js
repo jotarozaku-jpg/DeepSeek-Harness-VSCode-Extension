@@ -67,6 +67,20 @@ function modelSupportsVision(modelId) {
   return MODEL_OPTIONS.find((item) => item.id === modelId)?.vision === true;
 }
 
+function safeUsageLedger(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const result = {};
+  for (const model of MODEL_OPTIONS) {
+    const entry = source[model.id];
+    if (!entry || typeof entry !== 'object') continue;
+    result[model.id] = {
+      peak: safeUsage(entry.peak),
+      offPeak: safeUsage(entry.offPeak),
+    };
+  }
+  return result;
+}
+
 /** Validate webview-supplied images into ACP prompt blocks plus display metadata. */
 function sanitizeOutgoingImages(value) {
   const source = Array.isArray(value) ? value : [];
@@ -305,10 +319,7 @@ function sanitizeConversationState(value) {
       runtimeId: boundedString(item.runtimeId, '', 256) || undefined,
       activeTurn: item.activeTurn === true,
       usage: safeUsage(item.usage),
-      usageByTier: {
-        peak: safeUsage(item.usageByTier?.peak),
-        offPeak: safeUsage(item.usageByTier?.offPeak),
-      },
+      usageByModelTier: safeUsageLedger(item.usageByModelTier),
       pricingIncomplete: item.pricingIncomplete === true,
       contextUsage: safeContextUsage(item.contextUsage),
       performance: safePerformance(item.performance),
@@ -432,6 +443,7 @@ class DeepSeekChatController {
           String(message.text || ''),
           String(message.conversationId || this.activeConversationId || ''),
           Array.isArray(message.images) ? message.images : [],
+          boundedString(message.clientMessageId, '', 128),
         );
         break;
       case 'setConversationModel':
@@ -864,25 +876,39 @@ class DeepSeekChatController {
       return;
     }
     const previous = this.resolveConversationModel(conversationId);
+    if (previous === model) return;
     this.conversationModels.set(conversationId, model);
     this.post({ type: 'conversationModel', conversationId, model });
-    if (previous === model || !this.sessionIds.has(conversationId)) return;
+    if (!this.sessionIds.has(conversationId)) return;
     // The Harness fixes an agent's model at session creation, so an existing
     // conversation switches by starting a fresh session (context resets; the
     // local chat log stays).
-    await this.restartConversationSession(conversationId);
+    const restarted = await this.restartConversationSession(conversationId);
+    if (!restarted) {
+      this.conversationModels.set(conversationId, previous);
+      this.post({ type: 'conversationModel', conversationId, model: previous });
+      this.post({ type: 'connectionNotice', conversationId, message: '新模型会话创建失败，已恢复原模型和原会话。' });
+      return;
+    }
     this.post({ type: 'connectionNotice', conversationId, message: `已切换到 ${MODEL_OPTIONS.find((item) => item.id === model)?.label || model}，新的上下文从下一条消息开始。` });
   }
 
   async restartConversationSession(conversationId) {
     const previousSessionId = this.sessionIds.get(conversationId);
+    const previousControls = this.sessionControls.get(conversationId);
     this.sessionControls.delete(conversationId);
     this.sessionIds.delete(conversationId);
     if (previousSessionId) this.localByBackend.delete(previousSessionId);
     for (const key of [...this.toolCalls.keys()]) {
       if (key.startsWith(`${conversationId}:`)) this.toolCalls.delete(key);
     }
-    return this.startSession(conversationId);
+    const nextSessionId = await this.startSession(conversationId);
+    if (!nextSessionId && previousSessionId) {
+      this.sessionIds.set(conversationId, previousSessionId);
+      this.localByBackend.set(previousSessionId, conversationId);
+      if (previousControls) this.sessionControls.set(conversationId, previousControls);
+    }
+    return nextSessionId;
   }
 
   async clearConversation(conversationId) {
@@ -913,22 +939,27 @@ class DeepSeekChatController {
     this.post({ type: 'conversationCleared', conversationId, sessionId: nextSessionId, runtimeId: this.runtimeId });
   }
 
-  async sendPrompt(text, conversationId, images = []) {
+  async sendPrompt(text, conversationId, images = [], clientMessageId = '') {
     const prompt = text.trim();
     const imageInput = Array.isArray(images) ? images : [];
-    if ((!prompt && imageInput.length === 0) || !conversationId || this.turnsInProgress.has(conversationId)) return;
+    if ((!prompt && imageInput.length === 0) || !conversationId || this.turnsInProgress.has(conversationId)) {
+      if (clientMessageId) this.post({ type: 'discardImagePreview', conversationId, clientMessageId });
+      return;
+    }
     let imageBlocks = [];
     let imageMeta = [];
     if (imageInput.length > 0) {
       const model = this.resolveConversationModel(conversationId);
       if (!modelSupportsVision(model)) {
         this.post({ type: 'connectionNotice', conversationId, message: '当前模型不支持图片，请切换到 Vision 模型后重试。' });
+        if (clientMessageId) this.post({ type: 'discardImagePreview', conversationId, clientMessageId });
         if (prompt) this.post({ type: 'restoreInput', conversationId, text: prompt });
         return;
       }
       const admitted = sanitizeOutgoingImages(imageInput);
       if (admitted.error) {
         this.post({ type: 'connectionNotice', conversationId, message: admitted.error });
+        if (clientMessageId) this.post({ type: 'discardImagePreview', conversationId, clientMessageId });
         if (prompt) this.post({ type: 'restoreInput', conversationId, text: prompt });
         return;
       }
@@ -937,12 +968,19 @@ class DeepSeekChatController {
     }
     this.activeConversationId = conversationId;
     const sessionId = await this.startSession(conversationId);
-    if (!this.transport || !sessionId) return;
+    if (!this.transport || !sessionId) {
+      if (clientMessageId) this.post({ type: 'discardImagePreview', conversationId, clientMessageId });
+      return;
+    }
 
     this.turnsInProgress.add(conversationId);
     this.scheduleTurnStallCheck(conversationId);
     await vscode.commands.executeCommand('setContext', 'deepseekHarness.turnInProgress', true);
-    this.post({ type: 'userMessage', conversationId, text: prompt, ...(imageMeta.length ? { images: imageMeta } : {}) });
+    this.post({
+      type: 'userMessage', conversationId, text: prompt,
+      ...(clientMessageId ? { clientMessageId } : {}),
+      ...(imageMeta.length ? { images: imageMeta } : {}),
+    });
     this.post({ type: 'turnState', conversationId, active: true });
     try {
       const result = await this.transport.request('session/prompt', {
@@ -1596,6 +1634,7 @@ class DeepSeekChatController {
   getHtml(webview) {
     const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'style.css'));
     const i18nUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'i18n.js'));
+    const pricingUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'pricing.js'));
     const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'main.js'));
     const nonce = crypto.randomBytes(16).toString('hex');
     return `<!doctype html>
@@ -1603,7 +1642,7 @@ class DeepSeekChatController {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} data: blob:;">
   <link rel="stylesheet" href="${styleUri}">
   <title>DeepSeek Harness</title>
 </head>
@@ -1645,7 +1684,7 @@ class DeepSeekChatController {
             <div><span>扩展版本</span><strong id="managementVersion">—</strong></div>
             <div><span>Harness 配置</span><strong id="managementPreset">Current Cordis configuration</strong></div>
             <div><span>推理强度</span><strong id="managementReasoning">Max</strong></div>
-            <div><span>模型</span><strong id="managementModel">DeepSeek V4 Pro</strong></div>
+            <div><span>当前会话模型</span><strong id="managementModel">DeepSeek V4 Pro</strong></div>
             <div><span>API 凭据</span><strong id="managementCredentials">检查中</strong></div>
           </div>
           <p class="settings-note">Harness 配置与权限审核是两套独立设置；当前不提供 Minimal、PTC 或实验预设切换。</p>
@@ -1714,6 +1753,13 @@ class DeepSeekChatController {
       </div>
     </section>
   </div>
+  <div id="imagePreviewOverlay" class="image-preview-overlay" role="dialog" aria-modal="true" aria-label="图片预览" hidden>
+    <button id="closeImagePreview" class="image-preview-close" type="button" title="关闭图片预览" aria-label="关闭图片预览">×</button>
+    <figure class="image-preview-frame">
+      <img id="imagePreviewFull" alt="">
+      <figcaption id="imagePreviewCaption"></figcaption>
+    </figure>
+  </div>
   <div class="context-header">
     <div id="workspaceBar" class="workspace-bar"></div>
     <section id="sessionControls" class="session-controls" hidden></section>
@@ -1749,7 +1795,7 @@ class DeepSeekChatController {
           <button id="usageButton" class="usage-button" type="button" aria-expanded="false" title="当前对话 Token 用量">In 0 · Out 0 · Cache —</button>
           <span id="composerHint">Enter 发送 · Shift+Enter 换行</span>
           <section id="usagePanel" class="usage-panel" hidden>
-            <div class="usage-panel-title"><strong>当前对话用量与估算费用</strong><span>DeepSeek V4 Pro</span></div>
+            <div class="usage-panel-title"><strong>当前对话用量与估算费用</strong><span>按模型与时段</span></div>
             <dl>
               <div><dt>Input</dt><dd id="usageInput">0</dd></div>
               <div><dt>Output</dt><dd id="usageOutput">0</dd></div>
@@ -1763,7 +1809,7 @@ class DeepSeekChatController {
               <div class="usage-cost-total"><dt>Estimated cost</dt><dd id="usageCost">$0.000000</dd></div>
             </dl>
             <p id="usageCostBreakdown"></p>
-            <p>仅在打开这里时显示费用。按 DeepSeek V4 Pro 当前官方美元单价估算：缓存命中 $0.003625/M、未命中输入 $0.435/M、输出 $0.87/M；实际账单以 DeepSeek 为准。</p>
+            <p>按每次用量发生时的模型及 UTC 峰值／非峰值时段，以 DeepSeek 当前官方美元单价估算；实际账单以 DeepSeek 为准。</p>
             <div class="usage-panel-actions">
               <button id="usageCompact" class="management-button" type="button" title="压缩较早的对话上下文">Compact</button>
               <button id="usageClear" class="management-button warning-management-button" type="button" title="清空当前对话并新建 Harness 上下文">/clear</button>
@@ -1788,6 +1834,7 @@ class DeepSeekChatController {
     </div>
   </footer>
   <script nonce="${nonce}" src="${i18nUri}"></script>
+  <script nonce="${nonce}" src="${pricingUri}"></script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

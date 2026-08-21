@@ -12,7 +12,7 @@
     '设置与管理': 'Settings & management', '关闭': 'Close', '搜索标题和内容…': 'Search titles and content…',
     '搜索对话': 'Search conversations', '显示归档': 'Show archived', 'DeepSeek Harness 运行环境': 'DeepSeek Harness runtime',
     '当前运行': 'Current runtime', '连接状态': 'Connection', '扩展版本': 'Extension version',
-    'Harness 配置': 'Harness preset', '推理强度': 'Reasoning effort', '模型': 'Model', 'API 凭据': 'API credentials',
+    'Harness 配置': 'Harness preset', '推理强度': 'Reasoning effort', '模型': 'Model', '当前会话模型': 'Current conversation model', 'API 凭据': 'API credentials',
     '检查中': 'Checking', '对话显示与安全': 'Conversation display & safety', '界面语言': 'Interface language',
     '工具审核': 'Tool approval', '工具审核方式': 'Tool approval mode', '全部手动审核': 'Manual approval',
     '沙盒内自动，越界询问': 'Auto in sandbox; ask outside', '全部放行（超危险！）': 'Allow all (extremely dangerous!)',
@@ -31,7 +31,7 @@
     '向 DeepSeek Harness 提出任务…': 'Ask DeepSeek Harness to work on a task…', '上下文占用': 'Context usage',
     '上下文占用尚未知': 'Context usage is not available yet', '当前对话 Token 用量': 'Current conversation token usage',
     'Enter 发送 · Shift+Enter 换行': 'Enter to send · Shift+Enter for newline', '当前对话用量与估算费用': 'Current conversation usage & estimated cost',
-    '当前费率': 'Current pricing', '工具权限模式': 'Tool permission mode', '手动审核': 'Manual', '沙盒自动': 'Sandbox auto',
+    '当前费率': 'Current pricing', '按模型与时段': 'By model and time tier', '工具权限模式': 'Tool permission mode', '手动审核': 'Manual', '沙盒自动': 'Sandbox auto',
     '全部放行': 'Allow all', '停止': 'Stop', '发送': 'Send', '已配置 ✓': 'Configured ✓', '未配置': 'Not configured',
     '官方': 'Official', '本地': 'Local', '运行时': 'Runtime', '未声明名称': 'Unnamed', '已关闭': 'Disabled',
     '核心锁定': 'Core locked', '已启用': 'Enabled', '未知': 'Unknown', '没有发现额外的本地插件文件。': 'No additional local plugin files found.',
@@ -62,7 +62,7 @@
     'Harness 配置与权限审核是两套独立设置；当前不提供 Minimal、PTC 或实验预设切换。': 'Harness configuration and tool approval are independent. Minimal, PTC, and experimental preset switching are not currently available.',
     '模型、推理强度、预设及其他 Harness 设置请在 cordis.yml 中修改；修改后需要重启 Harness 生效。': 'Edit the model, reasoning effort, presets, and other Harness settings in cordis.yml, then restart Harness to apply them.',
     '核心组件保持锁定；以下开关会按依赖关系成组修改下一次运行时的组件目录。外部代码的安装与删除暂不自动执行。': 'Core components stay locked. These switches change grouped components for the next runtime; external code is not installed or removed automatically.',
-    '仅在打开这里时显示费用。按 DeepSeek V4 Pro 当前官方美元单价估算：缓存命中 $0.003625/M、未命中输入 $0.435/M、输出 $0.87/M；实际账单以 DeepSeek 为准。': 'Cost appears only while this panel is open. Estimates use the current official DeepSeek V4 Pro USD rates: cache hit $0.003625/M, cache miss input $0.435/M, output $0.87/M. Your DeepSeek bill is authoritative.',
+    '按每次用量发生时的模型及 UTC 峰值／非峰值时段，以 DeepSeek 当前官方美元单价估算；实际账单以 DeepSeek 为准。': 'Estimates use DeepSeek’s current official USD rates for the model and UTC peak/off-peak tier active when each usage event occurs. Your DeepSeek bill is authoritative.',
   };
 
   const JA = {
@@ -70,7 +70,7 @@
     '正在连接': '接続中', '新建对话': '新しい会話', '设置与管理': '設定と管理', '关闭': '閉じる',
     '搜索标题和内容…': 'タイトルと内容を検索…', '搜索对话': '会話を検索', '显示归档': 'アーカイブを表示',
     'DeepSeek Harness 运行环境': 'DeepSeek Harness 実行環境', '当前运行': '現在の実行状態', '连接状态': '接続状態',
-    '扩展版本': '拡張機能バージョン', 'Harness 配置': 'Harness プリセット', '推理强度': '推論強度', '模型': 'モデル',
+    '扩展版本': '拡張機能バージョン', 'Harness 配置': 'Harness プリセット', '推理强度': '推論強度', '模型': 'モデル', '当前会话模型': '現在の会話モデル',
     'API 凭据': 'API 認証情報', '检查中': '確認中', '对话显示与安全': '会話表示と安全性', '界面语言': '表示言語',
     '工具审核': 'ツール承認', '工具审核方式': 'ツール承認モード', '全部手动审核': 'すべて手動承認',
     '沙盒内自动，越界询问': 'サンドボックス内は自動・範囲外は確認', '全部放行（超危险！）': 'すべて許可（非常に危険！）',
@@ -87,7 +87,7 @@
     '通过 ACP 在当前 VS Code 工作区中协作。': 'ACP を通じて現在の VS Code ワークスペースで作業します。',
     '向 DeepSeek Harness 提出任务…': 'DeepSeek Harness にタスクを依頼…', '上下文占用': 'コンテキスト使用量',
     '上下文占用尚未知': 'コンテキスト使用量はまだ不明です', '当前对话 Token 用量': '現在の会話のトークン使用量',
-    'Enter 发送 · Shift+Enter 换行': 'Enter で送信 · Shift+Enter で改行', '当前对话用量与估算费用': '現在の会話の使用量と推定料金',
+    'Enter 发送 · Shift+Enter 换行': 'Enter で送信 · Shift+Enter で改行', '当前对话用量与估算费用': '現在の会話の使用量と推定料金', '按模型与时段': 'モデル・時間帯別',
     '当前费率': '現在の料金', '工具权限模式': 'ツール権限モード', '手动审核': '手動承認', '沙盒自动': 'サンドボックス自動',
     '全部放行': 'すべて許可', '停止': '停止', '发送': '送信', '已配置 ✓': '設定済み ✓', '未配置': '未設定',
     '官方': '公式', '本地': 'ローカル', '运行时': 'ランタイム', '未声明名称': '名称未設定', '已关闭': '無効',
@@ -118,7 +118,7 @@
     'Harness 配置与权限审核是两套独立设置；当前不提供 Minimal、PTC 或实验预设切换。': 'Harness 設定と権限承認は別の設定です。現在 Minimal、PTC、実験的プリセットの切り替えには対応していません。',
     '模型、推理强度、预设及其他 Harness 设置请在 cordis.yml 中修改；修改后需要重启 Harness 生效。': 'モデル、推論強度、プリセットなどの Harness 設定は cordis.yml で変更し、Harness を再起動して反映してください。',
     '核心组件保持锁定；以下开关会按依赖关系成组修改下一次运行时的组件目录。外部代码的安装与删除暂不自动执行。': 'コアコンポーネントはロックされています。以下のスイッチは依存関係ごとに次回ランタイムの構成を変更します。外部コードのインストールや削除は自動では行いません。',
-    '仅在打开这里时显示费用。按 DeepSeek V4 Pro 当前官方美元单价估算：缓存命中 $0.003625/M、未命中输入 $0.435/M、输出 $0.87/M；实际账单以 DeepSeek 为准。': '料金はこのパネルを開いている間だけ表示します。DeepSeek V4 Pro の現在の公式米ドル料金（キャッシュヒット $0.003625/M、非キャッシュ入力 $0.435/M、出力 $0.87/M）による推定です。実際の請求は DeepSeek をご確認ください。',
+    '按每次用量发生时的模型及 UTC 峰值／非峰值时段，以 DeepSeek 当前官方美元单价估算；实际账单以 DeepSeek 为准。': '各使用量が発生した時点のモデルと UTC のピーク／オフピーク区分に応じ、DeepSeek の現行公式米ドル料金で推定します。実際の請求は DeepSeek をご確認ください。',
   };
 
   Object.assign(EN, {
@@ -134,7 +134,13 @@
     '启用 Harness 上下文压缩和 Compact 功能。': 'Enable Harness context compaction and Compact.',
     '配置': 'Configuration', '当前对话': 'Current conversation', '正在启动 Harness…': 'Starting Harness…',
     '个核心组件': 'core components', '已配置启用': 'configured and enabled', '本地插件文件：': 'Local plugin files: ',
-    '缓存': 'Cache', '未缓存输入': 'Uncached input', '输出': 'Output', '思考中': 'Thinking', '排队': 'queue',
+    '缓存': 'Cache', '未缓存输入': 'Uncached input', '输入': 'Input', '输出': 'Output', '峰值时段': 'Peak', '非峰值时段': 'Off-peak',
+    '当前模型暂无价格资料': 'No pricing data for the current model', '尚无可计费用量。': 'No billable usage yet.',
+    '旧用量缺少模型或计费时段，无法可靠估算。': 'Older usage lacks model or pricing-tier data and cannot be estimated reliably.',
+    '旧用量缺少模型或时段，未计入': 'older usage lacks model or tier data and is excluded',
+    '图片仍在读取，请稍候再发送。': 'Images are still loading. Please wait before sending.', '图片读取失败，请重新选择。': 'Could not read the image. Please select it again.',
+    '图片预览': 'Image preview', '关闭图片预览': 'Close image preview', '点击查看原图': 'Click to view the original image', '查看原图': 'View original image',
+    '思考中': 'Thinking', '排队': 'queue',
     '立即插话': 'steer now', '上下文': 'Context', '本轮': 'This turn',
     '压缩较早的 Harness 上下文（可能产生费用）': 'Compact earlier Harness context (may incur charges)',
     '清空当前对话并新建 Harness 上下文': 'Clear this conversation and create a new Harness context',
@@ -171,7 +177,13 @@
     '启用 Harness 上下文压缩和 Compact 功能。': 'Harness のコンテキスト圧縮と Compact を有効にします。',
     '配置': '設定', '当前对话': '現在の会話', '正在启动 Harness…': 'Harness を起動中…',
     '个核心组件': '個のコアコンポーネント', '已配置启用': '設定済み・有効', '本地插件文件：': 'ローカルプラグインファイル：',
-    '缓存': 'キャッシュ', '未缓存输入': '非キャッシュ入力', '输出': '出力', '思考中': '思考中', '排队': '送信待ち',
+    '缓存': 'キャッシュ', '未缓存输入': '非キャッシュ入力', '输入': '入力', '输出': '出力', '峰值时段': 'ピーク', '非峰值时段': 'オフピーク',
+    '当前模型暂无价格资料': '現在のモデルの料金情報がありません', '尚无可计费用量。': '課金対象の使用量はまだありません。',
+    '旧用量缺少模型或计费时段，无法可靠估算。': '以前の使用量にはモデルまたは料金区分の情報がないため、正確に推定できません。',
+    '旧用量缺少模型或时段，未计入': '以前の使用量はモデルまたは時間帯の情報がないため未計上',
+    '图片仍在读取，请稍候再发送。': '画像を読み込み中です。少し待ってから送信してください。', '图片读取失败，请重新选择。': '画像を読み込めませんでした。もう一度選択してください。',
+    '图片预览': '画像プレビュー', '关闭图片预览': '画像プレビューを閉じる', '点击查看原图': 'クリックして元画像を表示', '查看原图': '元画像を表示',
+    '思考中': '思考中', '排队': '送信待ち',
     '立即插话': 'すぐに指示', '上下文': 'コンテキスト', '本轮': '今回',
     '压缩较早的 Harness 上下文（可能产生费用）': '以前の Harness コンテキストを圧縮（料金が発生する場合があります）',
     '清空当前对话并新建 Harness 上下文': '現在の会話を消去して新しい Harness コンテキストを作成',
@@ -239,8 +251,18 @@
     if (match) return locale === 'en' ? `Switching to ${match[1]} mode…` : `${match[1]} モードに切り替え中…`;
     match = source.match(/^上下文 ([\d,.]+) \/ ([\d,.]+)$/);
     if (match) return locale === 'en' ? `Context ${match[1]} / ${match[2]}` : `コンテキスト ${match[1]} / ${match[2]}`;
-    match = source.match(/^缓存 \$([\d.]+) ＋ 未缓存输入 \$([\d.]+) ＋ 输出 \$([\d.]+)$/);
-    if (match) return locale === 'en' ? `Cache $${match[1]} + uncached input $${match[2]} + output $${match[3]}` : `キャッシュ $${match[1]} ＋ 非キャッシュ入力 $${match[2]} ＋ 出力 $${match[3]}`;
+    match = source.match(/^(.+) · (峰值时段|非峰值时段)( · 缓存 \$[\d.]+\/M · 输入 \$[\d.]+\/M · 输出 \$[\d.]+\/M)?$/);
+    if (match) {
+      const tier = match[2] === '峰值时段' ? (locale === 'en' ? 'Peak' : 'ピーク') : (locale === 'en' ? 'Off-peak' : 'オフピーク');
+      const rates = match[3] ? translateFragments(match[3], locale) : '';
+      return `${match[1]} · ${tier}${rates}`;
+    }
+    match = source.match(/^缓存 \$([\d.]+) ＋ 未缓存输入 \$([\d.]+) ＋ 输出 \$([\d.]+)(（\* 旧用量缺少模型或时段，未计入）)?$/);
+    if (match) {
+      const base = locale === 'en' ? `Cache $${match[1]} + uncached input $${match[2]} + output $${match[3]}` : `キャッシュ $${match[1]} ＋ 非キャッシュ入力 $${match[2]} ＋ 出力 $${match[3]}`;
+      if (!match[4]) return base;
+      return locale === 'en' ? `${base} (* older usage excluded: missing model or tier data)` : `${base}（* 以前の使用量はモデルまたは時間帯の情報がないため未計上）`;
+    }
     // Harness/tool/error 文本可能恰好包含 UI 字典片段；未命中明确模式时保持原文。
     return source;
   }

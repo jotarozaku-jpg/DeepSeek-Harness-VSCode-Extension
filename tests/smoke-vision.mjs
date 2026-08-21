@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict'
 import path from 'node:path'
 import { createRequire } from 'node:module'
+import { readFileSync } from 'node:fs'
 
 const require = createRequire(import.meta.url)
 const { AcpTransport } = require('../src/acpTransport')
@@ -14,6 +15,14 @@ const repoRoot = path.resolve(import.meta.dirname, '..')
 const configRoot = process.env.DSH_HOME || path.join(process.env.USERPROFILE, '.deepseek-harness-vscode')
 const harnessRoot = process.env.DSH_HARNESS_ROOT || path.join(process.env.USERPROFILE, '.deepseek-harness')
 const cwd = process.env.DSH_TEST_WORKSPACE || repoRoot
+const cordis = readFileSync(path.join(repoRoot, 'adapter', 'cordis.yml'), 'utf8')
+
+for (const setting of [
+  'maxRequestImageBytes: 33554432',
+  'maxImageBytes: 16777216',
+  'maxImagesPerMessage: 8',
+  'maxMessageImageBytes: 20971520',
+]) assert.ok(cordis.includes(setting), `missing aligned image setting: ${setting}`)
 const transport = new AcpTransport({
   command: 'node',
   args: [path.join(repoRoot, 'adapter', 'acp-bridge.mjs')],

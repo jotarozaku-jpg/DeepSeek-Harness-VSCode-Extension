@@ -362,11 +362,31 @@ a { color: var(--vscode-textLink-foreground); }
 .image-chip-remove:hover { color: var(--text); background: var(--surface); }
 .attach-button { flex: none; font-size: 12px; }
 .composer-model-wrap { display: inline-flex; flex: none; align-items: center; }
-.user-image-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.user-image-gallery { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
+.user-image-preview {
+  display: grid; max-width: 190px; padding: 0; overflow: hidden; border: 1px solid var(--border);
+  border-radius: 9px; color: var(--text); background: color-mix(in srgb, var(--page) 82%, transparent); cursor: zoom-in;
+}
+.user-image-preview:hover, .user-image-preview:focus-visible { border-color: var(--accent); outline: none; }
+.user-image-preview img { display: block; width: 100%; height: 112px; object-fit: cover; background: var(--page); }
+.user-image-caption { max-width: 190px; padding: 4px 7px; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .user-image-chip {
   display: inline-flex; align-items: center; padding: 2px 7px; border: 1px solid var(--border);
   border-radius: 7px; background: color-mix(in srgb, var(--page) 80%, transparent); font-size: 10px;
 }
+.image-preview-overlay {
+  position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 42px;
+  background: rgba(0, 0, 0, .82); backdrop-filter: blur(8px);
+}
+.image-preview-overlay[hidden] { display: none; }
+.image-preview-frame { display: grid; max-width: 94vw; max-height: 92vh; margin: 0; place-items: center; gap: 10px; }
+.image-preview-frame img { display: block; max-width: 94vw; max-height: 84vh; border-radius: 6px; object-fit: contain; box-shadow: 0 18px 70px rgba(0, 0, 0, .48); }
+.image-preview-frame figcaption { max-width: 88vw; overflow: hidden; color: #fff; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.image-preview-close {
+  position: fixed; z-index: 1; top: 14px; right: 18px; width: 34px; height: 34px; padding: 0;
+  border: 1px solid rgba(255, 255, 255, .3); border-radius: 50%; color: #fff; background: rgba(0, 0, 0, .42); cursor: pointer; font-size: 22px;
+}
+.image-preview-close:hover, .image-preview-close:focus-visible { border-color: #fff; outline: none; background: rgba(255, 255, 255, .16); }
 .composer-left { position: relative; display: flex; min-width: 0; flex: 1; align-items: center; gap: 9px; }
 #composerHint { padding-left: 5px; color: var(--muted); font-size: 10px; }
 .usage-button {

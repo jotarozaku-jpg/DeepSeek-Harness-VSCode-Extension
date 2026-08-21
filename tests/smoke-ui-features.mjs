@@ -3,16 +3,19 @@ import { readFileSync } from 'node:fs'
 
 const extension = readFileSync(new URL('../extension.js', import.meta.url), 'utf8')
 const main = readFileSync(new URL('../media/main.js', import.meta.url), 'utf8')
+const pricing = readFileSync(new URL('../media/pricing.js', import.meta.url), 'utf8')
 const style = readFileSync(new URL('../media/style.css', import.meta.url), 'utf8')
 const cordis = readFileSync(new URL('../adapter/cordis.yml', import.meta.url), 'utf8')
 const questionPatch = readFileSync(new URL('../adapter/patches/acp-user-questions.patch', import.meta.url), 'utf8')
 const richPatch = readFileSync(new URL('../adapter/patches/acp-rich-events.patch', import.meta.url), 'utf8')
 const dashboardPatch = readFileSync(new URL('../adapter/patches/acp-dashboard.patch', import.meta.url), 'utf8')
 
-for (const value of ['cacheHit: 0.003625', 'cacheMiss: 0.435', 'output: 0.87']) {
-  assert.match(main, new RegExp(value.replace('.', '\\.')))
+for (const value of ['cacheHit: 0.007', 'cacheMiss: 0.22', 'output: 0.66', 'cacheHit: 0.044', 'cacheMiss: 1.32', 'output: 3.96']) {
+  assert.match(pricing, new RegExp(value.replace('.', '\\.')))
 }
-assert.doesNotMatch(main, /activePriceTier/)
+assert.match(main, /usageByModelTier/)
+assert.match(main, /pricingTierAt/)
+assert.match(extension, /media', 'pricing\.js'/)
 assert.match(main + extension + style, /context-ring/)
 assert.match(main, /tokensPerSecond/)
 assert.match(richPatch, /contextPressure/)
@@ -53,8 +56,19 @@ for (const plugin of ['@deepseek-ai/dsh-user-questions', '@deepseek-ai/dsh-tool-
   assert.ok(cordis.includes(plugin), `missing interactive plugin ${plugin}`)
 }
 
-for (const selector of ['.session-filter', '.queued-bubble', '.question-card', '.context-ring', '.slash-suggestion']) {
+for (const selector of ['.session-filter', '.queued-bubble', '.question-card', '.context-ring', '.slash-suggestion', '.user-image-preview', '.image-preview-overlay']) {
   assert.ok(style.includes(selector), `missing UI style ${selector}`)
 }
 
-process.stdout.write(`${JSON.stringify({ pricing: true, contextActions: true, runtimeDashboard: true, queueAndSteer: true, sessionManagement: true, slashCommands: true, interactiveQuestions: true }, null, 2)}\n`)
+assert.match(extension, /img-src[^;]+blob:/)
+assert.match(extension, /当前会话模型/)
+assert.match(main, /function updateManagementModel/)
+assert.match(main, /updateManagementModel\(item\)/)
+assert.match(main, /conversationInteractionActive/)
+assert.match(main, /beginConversationInteraction/)
+assert.match(main, /typeof entry\.expanded === 'boolean'/)
+for (const feature of ['clientMessageId', 'discardImagePreview', 'messageImagePreviews', 'URL.createObjectURL', 'URL.revokeObjectURL', 'openFullImage']) {
+  assert.match(extension + main, new RegExp(feature.replace('.', '\\.')))
+}
+
+process.stdout.write(`${JSON.stringify({ modelAndTierPricing: true, contextActions: true, runtimeDashboard: true, queueAndSteer: true, sessionManagement: true, slashCommands: true, interactiveQuestions: true, imageMessagePreview: true }, null, 2)}\n`)

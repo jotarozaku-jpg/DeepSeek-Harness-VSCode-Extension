@@ -1,8 +1,14 @@
-/* global acquireVsCodeApi, DSH_I18N */
+/* global acquireVsCodeApi, DSH_I18N, DeepSeekHarnessPricing */
 'use strict';
 
 const vscode = acquireVsCodeApi();
 const i18n = DSH_I18N;
+const {
+  MODEL_PRICING_USD_PER_MILLION,
+  pricingTierAt,
+  calculateUsageCost,
+  pricingLabel,
+} = DeepSeekHarnessPricing;
 let uiLanguageValue = 'zh-CN';
 const conversation = document.getElementById('conversation');
 const welcome = document.getElementById('welcome');
@@ -56,6 +62,10 @@ const autoAllowRead = document.getElementById('autoAllowRead');
 const thoughtDisplay = document.getElementById('thoughtDisplay');
 const uiLanguage = document.getElementById('uiLanguage');
 const settingsOverlay = document.getElementById('settingsOverlay');
+const imagePreviewOverlay = document.getElementById('imagePreviewOverlay');
+const closeImagePreview = document.getElementById('closeImagePreview');
+const imagePreviewFull = document.getElementById('imagePreviewFull');
+const imagePreviewCaption = document.getElementById('imagePreviewCaption');
 const closeSettings = document.getElementById('closeSettings');
 const openAdvancedSettings = document.getElementById('openAdvancedSettings');
 const openLogs = document.getElementById('openLogs');
@@ -97,7 +107,7 @@ function tr(source) {
 
 function refreshChrome() {
   chromeLocalizer.refresh([
-    document.querySelector('.topbar'), sessionPanel, settingsOverlay,
+    document.querySelector('.topbar'), sessionPanel, settingsOverlay, imagePreviewOverlay,
     document.querySelector('.context-header'), welcome, document.querySelector('.composer-shell'),
   ]);
 }
@@ -130,6 +140,9 @@ let dashboardTimer;
 let saveTimer;
 let renderTimer;
 let renderPendingForceScroll = false;
+let conversationInteractionActive = false;
+let renderDeferredByInteraction = false;
+let conversationInteractionReleaseTimer;
 let lastRenderAt = 0;
 let configured = false;
 let renderEpoch = 0;
@@ -144,6 +157,8 @@ let availableModels = [];
 let defaultModelId = 'deepseek-v4-pro';
 let imageLimits = { maxImages: 8, maxImageBytes: 16 * 1024 * 1024, maxMessageImageBytes: 20 * 1024 * 1024 };
 const draftImagesByConversation = new Map();
+const pendingImageReservations = new Map();
+const messageImagePreviews = new Map();
 const IMAGE_MIME_SET = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const renderedEntryLimits = new Map();
 const MAX_STORED_CONVERSATIONS = 50;
@@ -157,7 +172,6 @@ const MAX_STREAM_ENTRY_CHARS = 256 * 1024;
 const STREAM_RENDER_INTERVAL_MS = 50;
 const STATE_SAVE_INTERVAL_MS = 500;
 const RENDER_ENTRY_PAGE_SIZE = 200;
-const V4_PRO_USD_PER_MILLION = Object.freeze({ cacheHit: 0.003625, cacheMiss: 0.435, output: 0.87 });
 const SLASH_COMMANDS = Object.freeze([
   { command: '/compact', detail: '压缩较早的 Harness 上下文（可能产生费用）' },
   { command: '/clear', detail: '清空当前对话并新建 Harness 上下文' },
@@ -194,6 +208,24 @@ function normalizeUsage(value) {
 function usageHasTokens(value) {
   const usage = normalizeUsage(value);
   return Object.values(usage).some((count) => count > 0);
+}
+
+function normalizeUsageLedger(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const result = {};
+  for (const modelId of Object.keys(MODEL_PRICING_USD_PER_MILLION)) {
+    const entry = source[modelId];
+    if (!entry || typeof entry !== 'object') continue;
+    result[modelId] = {
+      peak: normalizeUsage(entry.peak),
+      offPeak: normalizeUsage(entry.offPeak),
+    };
+  }
+  return result;
+}
+
+function usageLedgerHasTokens(value) {
+  return Object.values(value || {}).some((entry) => usageHasTokens(entry?.peak) || usageHasTokens(entry?.offPeak));
 }
 
 function normalizePerformance(value) {
@@ -252,7 +284,7 @@ function normalizeConversation(item) {
     return [entry];
   });
   if (droppedQueued) entries.push({ type: 'notice', message: '上次关闭前的排队消息没有自动执行，请按需要重新发送。' });
-  const hasStoredTiers = item?.usageByTier && typeof item.usageByTier === 'object';
+  const usageByModelTier = normalizeUsageLedger(item?.usageByModelTier);
   const usage = normalizeUsage(item?.usage);
   return {
     id: String(item?.id || uid()),
@@ -268,11 +300,8 @@ function normalizeConversation(item) {
     modes: item?.modes,
     configOptions: Array.isArray(item?.configOptions) ? item.configOptions : [],
     usage,
-    usageByTier: {
-      peak: normalizeUsage(item?.usageByTier?.peak),
-      offPeak: normalizeUsage(item?.usageByTier?.offPeak),
-    },
-    pricingIncomplete: Boolean(item?.pricingIncomplete) || (!hasStoredTiers && usageHasTokens(usage)),
+    usageByModelTier,
+    pricingIncomplete: Boolean(item?.pricingIncomplete) || (usageHasTokens(usage) && !usageLedgerHasTokens(usageByModelTier)),
     contextUsage: {
       used: tokenCount(item?.contextUsage?.used),
       size: tokenCount(item?.contextUsage?.size),
@@ -302,6 +331,63 @@ function currentDraftImages() {
   const id = current().id;
   if (!draftImagesByConversation.has(id)) draftImagesByConversation.set(id, []);
   return draftImagesByConversation.get(id);
+}
+
+function imageReservation(conversationId) {
+  if (!pendingImageReservations.has(conversationId)) pendingImageReservations.set(conversationId, { count: 0, bytes: 0 });
+  return pendingImageReservations.get(conversationId);
+}
+
+function releaseImageReservation(conversationId, bytes) {
+  const reservation = imageReservation(conversationId);
+  reservation.count = Math.max(0, reservation.count - 1);
+  reservation.bytes = Math.max(0, reservation.bytes - bytes);
+  if (reservation.count === 0 && reservation.bytes === 0) pendingImageReservations.delete(conversationId);
+}
+
+function revokePreviewUrl(url) {
+  if (typeof url === 'string' && url.startsWith('blob:')) URL.revokeObjectURL(url);
+}
+
+function clearDraftImages(conversationId) {
+  const images = draftImagesByConversation.get(conversationId) || [];
+  for (const image of images) revokePreviewUrl(image.previewUrl);
+  draftImagesByConversation.set(conversationId, []);
+}
+
+function releaseMessagePreview(messageId) {
+  const previews = messageImagePreviews.get(messageId) || [];
+  for (const image of previews) revokePreviewUrl(image.url);
+  messageImagePreviews.delete(messageId);
+}
+
+function releaseEntryPreviews(entries) {
+  for (const entry of entries || []) if (entry?.previewId) releaseMessagePreview(entry.previewId);
+}
+
+function storeMessagePreviews(messageId, images) {
+  if (!messageId || images.length === 0) return;
+  messageImagePreviews.set(messageId, images.map((image) => ({
+    name: image.name,
+    url: image.previewUrl,
+  })));
+  while (messageImagePreviews.size > 50) releaseMessagePreview(messageImagePreviews.keys().next().value);
+}
+
+function openFullImage(url, name) {
+  if (!url) return;
+  imagePreviewFull.src = url;
+  imagePreviewFull.alt = name || tr('图片预览');
+  imagePreviewCaption.textContent = name || tr('图片预览');
+  imagePreviewOverlay.hidden = false;
+  requestAnimationFrame(() => closeImagePreview.focus());
+}
+
+function closeFullImage() {
+  imagePreviewOverlay.hidden = true;
+  imagePreviewFull.removeAttribute('src');
+  imagePreviewFull.alt = '';
+  imagePreviewCaption.textContent = '';
 }
 
 function populateModelSelect() {
@@ -395,13 +481,20 @@ function setApprovalModeControls(value) {
   })[normalized];
 }
 
+function updateManagementModel(item = current()) {
+  const modelId = conversationModelId(item);
+  const model = modelInfo(modelId);
+  setManagementText(managementModel, model?.label || modelId, '—');
+  managementModel.title = modelId;
+}
+
 function updateManagementConfiguration(value = managementConfiguration) {
   managementConfiguration = { ...managementConfiguration, ...(value || {}) };
   if (Array.isArray(managementConfiguration.featureGroups)) managedFeatureGroups = managementConfiguration.featureGroups;
   setManagementText(managementVersion, managementConfiguration.extensionVersion);
   setManagementText(managementPreset, managementConfiguration.preset, 'Current Cordis configuration');
   setManagementText(managementReasoning, managementConfiguration.reasoningEffort, 'max');
-  setManagementText(managementModel, managementConfiguration.model, 'DeepSeek V4 Pro');
+  updateManagementModel();
   setManagementText(managementCwd, managementConfiguration.cwd);
   setManagementText(managementHarnessRoot, managementConfiguration.harnessRoot);
   setManagementText(managementConfigRoot, managementConfiguration.configRoot);
@@ -508,13 +601,22 @@ function compactTokens(value) {
   return number.toLocaleString();
 }
 
-function calculateUsageCost(usage) {
-  const value = normalizeUsage(usage);
-  const rate = V4_PRO_USD_PER_MILLION;
-  const cache = value.cacheReadTokens * rate.cacheHit / 1_000_000;
-  const uncached = (value.uncachedInputTokens + value.cacheWriteTokens) * rate.cacheMiss / 1_000_000;
-  const output = value.outputTokens * rate.output / 1_000_000;
-  return { cache, uncached, output, total: cache + uncached + output };
+function calculateConversationCost(item) {
+  const total = { cache: 0, uncached: 0, output: 0, total: 0, buckets: 0 };
+  for (const [modelId, tiers] of Object.entries(item.usageByModelTier || {})) {
+    for (const tier of ['peak', 'offPeak']) {
+      const usage = normalizeUsage(tiers?.[tier]);
+      if (!usageHasTokens(usage)) continue;
+      const cost = calculateUsageCost(usage, modelId, tier);
+      if (!cost) continue;
+      total.cache += cost.cache;
+      total.uncached += cost.uncached;
+      total.output += cost.output;
+      total.total += cost.total;
+      total.buckets += 1;
+    }
+  }
+  return total;
 }
 
 function formatDuration(milliseconds) {
@@ -544,10 +646,19 @@ function renderUsage(item) {
   const performance = normalizePerformance(item.performance);
   usageTtft.textContent = formatDuration(performance.ttftMs);
   usageThroughput.textContent = performance.tokensPerSecond > 0 ? `${performance.tokensPerSecond.toFixed(1)} tok/s` : '—';
-  usagePriceTier.textContent = 'DeepSeek V4 Pro 官方美元单价';
-  const cost = calculateUsageCost(usage);
-  usageCost.textContent = `$${cost.total.toFixed(6)}`;
-  usageCostBreakdown.textContent = `缓存 $${cost.cache.toFixed(6)} ＋ 未缓存输入 $${cost.uncached.toFixed(6)} ＋ 输出 $${cost.output.toFixed(6)}`;
+  const modelId = item.turnTelemetry?.pricingModelId || conversationModelId(item);
+  const tier = item.turnTelemetry?.pricingTier || pricingTierAt();
+  const currentRates = MODEL_PRICING_USD_PER_MILLION[modelId]?.[tier];
+  const label = pricingLabel(modelId, tier);
+  usagePriceTier.textContent = currentRates && label
+    ? `${label} · 缓存 $${currentRates.cacheHit}/M · 输入 $${currentRates.cacheMiss}/M · 输出 $${currentRates.output}/M`
+    : '当前模型暂无价格资料';
+  const cost = calculateConversationCost(item);
+  const incomplete = item.pricingIncomplete === true;
+  usageCost.textContent = cost.buckets > 0 ? `$${cost.total.toFixed(6)}${incomplete ? '*' : ''}` : '—';
+  usageCostBreakdown.textContent = cost.buckets > 0
+    ? `缓存 $${cost.cache.toFixed(6)} ＋ 未缓存输入 $${cost.uncached.toFixed(6)} ＋ 输出 $${cost.output.toFixed(6)}${incomplete ? '（* 旧用量缺少模型或时段，未计入）' : ''}`
+    : incomplete ? '旧用量缺少模型或计费时段，无法可靠估算。' : '尚无可计费用量。';
 }
 
 function addUsage(item, value) {
@@ -555,11 +666,29 @@ function addUsage(item, value) {
   const usage = normalizeUsage(item.usage);
   for (const key of Object.keys(usage)) usage[key] = tokenCount(usage[key] + delta[key]);
   item.usage = usage;
+  const modelId = item.turnTelemetry?.pricingModelId || conversationModelId(item);
+  const tier = item.turnTelemetry?.pricingTier || pricingTierAt();
+  if (MODEL_PRICING_USD_PER_MILLION[modelId]?.[tier]) {
+    item.usageByModelTier ||= {};
+    item.usageByModelTier[modelId] ||= { peak: normalizeUsage(), offPeak: normalizeUsage() };
+    const bucket = normalizeUsage(item.usageByModelTier[modelId][tier]);
+    for (const key of Object.keys(bucket)) bucket[key] = tokenCount(bucket[key] + delta[key]);
+    item.usageByModelTier[modelId][tier] = bucket;
+  } else if (usageHasTokens(delta)) {
+    item.pricingIncomplete = true;
+  }
   if (item.turnTelemetry) item.turnTelemetry.outputTokens = tokenCount(item.turnTelemetry.outputTokens + delta.outputTokens);
 }
 
 function startTurnTelemetry(item) {
-  item.turnTelemetry = { startedAt: Date.now(), firstActivityAt: 0, outputTokens: 0 };
+  const startedAt = Date.now();
+  item.turnTelemetry = {
+    startedAt,
+    firstActivityAt: 0,
+    outputTokens: 0,
+    pricingModelId: conversationModelId(item),
+    pricingTier: pricingTierAt(startedAt),
+  };
 }
 
 function markTurnActivity(item) {
@@ -753,12 +882,28 @@ function renderEntry(entry) {
     const row = make('article', 'message user-message');
     const bubble = make('div', `user-bubble${entry.steering ? ' steering-bubble' : ''}`, entry.text);
     if (Array.isArray(entry.images) && entry.images.length) {
-      const chips = make('div', 'user-image-chips');
-      for (const image of entry.images) {
+      const previews = messageImagePreviews.get(entry.previewId) || [];
+      const gallery = make('div', 'user-image-gallery');
+      entry.images.forEach((image, index) => {
         const size = image.bytes ? ` · ${Math.max(1, Math.round(image.bytes / 1024))}KB` : '';
-        chips.appendChild(make('span', 'user-image-chip', `🖼 ${image.name}${size}`));
-      }
-      bubble.appendChild(chips);
+        const preview = previews[index];
+        if (preview?.url) {
+          const button = make('button', 'user-image-preview');
+          button.type = 'button';
+          button.title = tr('点击查看原图');
+          button.setAttribute('aria-label', `${tr('查看原图')}：${image.name}`);
+          const thumbnail = document.createElement('img');
+          thumbnail.src = preview.url;
+          thumbnail.alt = image.name;
+          const caption = make('span', 'user-image-caption', `${image.name}${size}`);
+          button.append(thumbnail, caption);
+          button.addEventListener('click', () => openFullImage(preview.url, image.name));
+          gallery.appendChild(button);
+        } else {
+          gallery.appendChild(make('span', 'user-image-chip', `🖼 ${image.name}${size}`));
+        }
+      });
+      bubble.appendChild(gallery);
     }
     row.appendChild(bubble);
     return row;
@@ -775,9 +920,20 @@ function renderEntry(entry) {
   if (entry.type === 'thought') {
     if (thoughtDisplay.value === 'hidden') return null;
     const details = make('details', `thought-card${entry.streaming ? ' streaming' : ''}`);
-    details.open = thoughtDisplay.value === 'expanded';
+    details.open = typeof entry.expanded === 'boolean' ? entry.expanded : thoughtDisplay.value === 'expanded';
     const summary = make('summary');
     summary.append(make('span', 'thought-spinner'), make('span', '', tr(entry.streaming ? '正在思考…' : '思考过程')));
+    summary.addEventListener('click', (event) => {
+      event.preventDefault();
+      entry.expanded = !details.open;
+      details.open = entry.expanded;
+      if (details.open) {
+        userPausedFollow = true;
+        followOutput = false;
+        lastScrollY = scroller().scrollTop;
+      }
+      persist();
+    });
     const body = make('div', 'thought-body');
     if (entry.text) renderMarkdown(body, entry.text);
     else body.appendChild(make('span', 'thought-placeholder', tr('等待 Harness 返回思考内容…')));
@@ -968,8 +1124,13 @@ function setConversationArchived(id, archived) {
 }
 
 function deleteConversation(id) {
+  const removed = conversations.find((item) => item.id === id);
+  releaseEntryPreviews(removed?.entries);
+  clearDraftImages(id);
   conversations = conversations.filter((item) => item.id !== id);
   renderedEntryLimits.delete(id);
+  draftImagesByConversation.delete(id);
+  pendingImageReservations.delete(id);
   if (activeConversationId === id) activeConversationId = conversations.sort((a, b) => b.updatedAt - a.updatedAt)[0]?.id;
   ensureConversation();
   render();
@@ -979,6 +1140,12 @@ function deleteConversation(id) {
 
 function clearConversationHistory() {
   if (!globalThis.confirm('删除插件保存的全部本地对话记录？此操作无法撤销。')) return;
+  for (const item of conversations) {
+    releaseEntryPreviews(item.entries);
+    clearDraftImages(item.id);
+  }
+  draftImagesByConversation.clear();
+  pendingImageReservations.clear();
   conversations = [];
   renderedEntryLimits.clear();
   activeConversationId = undefined;
@@ -1180,6 +1347,10 @@ function restoreScrollAnchor(anchor, root = scroller()) {
 
 function scheduleRender(forceScroll = false) {
   renderPendingForceScroll ||= forceScroll;
+  if (conversationInteractionActive) {
+    renderDeferredByInteraction = true;
+    return;
+  }
   if (renderTimer) return;
   const elapsed = performance.now() - lastRenderAt;
   const delay = Math.max(0, STREAM_RENDER_INTERVAL_MS - elapsed);
@@ -1276,6 +1447,7 @@ function render(forceScroll = false) {
   composerModel.disabled = busy;
   const activeModel = modelInfo(conversationModelId(item));
   if (activeModel) modelLabel.textContent = activeModel.label;
+  updateManagementModel(item);
   attachImage.hidden = !conversationSupportsVision(item);
   renderImageChips();
   if (cancelState === 'requested') composerHint.textContent = '正在等待 Harness 确认停止…';
@@ -1345,7 +1517,30 @@ function boundedToolField(value) {
 
 function trimRuntimeEntries(item) {
   if (item.entries.length <= MAX_RUNTIME_ENTRIES) return;
-  item.entries.splice(0, item.entries.length - RUNTIME_ENTRY_TRIM_TARGET);
+  const removed = item.entries.splice(0, item.entries.length - RUNTIME_ENTRY_TRIM_TARGET);
+  releaseEntryPreviews(removed);
+}
+
+function beginConversationInteraction(event) {
+  if (!(event.target instanceof Element) || !event.target.closest('summary, button, a, input, textarea, select, [role="button"]')) return;
+  clearTimeout(conversationInteractionReleaseTimer);
+  conversationInteractionActive = true;
+  if (renderTimer) {
+    clearTimeout(renderTimer);
+    renderTimer = undefined;
+    renderDeferredByInteraction = true;
+  }
+}
+
+function endConversationInteraction() {
+  if (!conversationInteractionActive) return;
+  clearTimeout(conversationInteractionReleaseTimer);
+  conversationInteractionReleaseTimer = setTimeout(() => {
+    conversationInteractionActive = false;
+    if (!renderDeferredByInteraction) return;
+    renderDeferredByInteraction = false;
+    scheduleRender();
+  }, 120);
 }
 
 function appendChunk(item, type, update) {
@@ -1514,8 +1709,13 @@ function executeSlashCommand(text, item) {
 function submit(options = {}) {
   const text = input.value.trim();
   const images = currentDraftImages();
-  if ((!text && images.length === 0) || compactActive) return;
   const item = current();
+  const pendingImages = pendingImageReservations.get(item.id)?.count || 0;
+  if ((!text && images.length === 0 && pendingImages === 0) || compactActive) return;
+  if (pendingImages > 0) {
+    composerHint.textContent = tr('图片仍在读取，请稍候再发送。');
+    return;
+  }
   if (text && !item.activeTurn && executeSlashCommand(text, item)) {
     input.value = '';
     resizeInput();
@@ -1536,10 +1736,13 @@ function submit(options = {}) {
     vscode.postMessage({ type: options.steer === true ? 'steerQueued' : 'enqueuePrompt', conversationId: item.id, queueId: uid(), text });
   } else {
     const payloadImages = images.map(({ name, mimeType, data }) => ({ name, mimeType, data }));
+    const clientMessageId = payloadImages.length ? uid() : '';
+    storeMessagePreviews(clientMessageId, images);
     draftImagesByConversation.set(item.id, []);
     renderImageChips();
     vscode.postMessage({
       type: 'send', conversationId: item.id, text,
+      ...(clientMessageId ? { clientMessageId } : {}),
       ...(payloadImages.length ? { images: payloadImages } : {}),
     });
   }
@@ -1552,14 +1755,15 @@ function renderImageChips() {
   images.forEach((image, index) => {
     const chip = make('span', 'image-chip');
     const thumb = document.createElement('img');
-    thumb.src = image.dataUrl;
+    thumb.src = image.previewUrl || image.dataUrl;
     thumb.alt = image.name;
     const label = make('span', 'image-chip-name', `${image.name} · ${Math.max(1, Math.round(image.bytes / 1024))}KB`);
     const remove = make('button', 'image-chip-remove', '×');
     remove.type = 'button';
     remove.title = tr('移除图片');
     remove.addEventListener('click', () => {
-      images.splice(index, 1);
+      const [removed] = images.splice(index, 1);
+      revokePreviewUrl(removed?.previewUrl);
       renderImageChips();
     });
     chip.append(thumb, label, remove);
@@ -1575,7 +1779,8 @@ function addDraftImageFile(file) {
     return;
   }
   const images = currentDraftImages();
-  if (images.length >= imageLimits.maxImages) {
+  const reservation = imageReservation(item.id);
+  if (images.length + reservation.count >= imageLimits.maxImages) {
     composerHint.textContent = `一次最多发送 ${imageLimits.maxImages} 张图片。`;
     return;
   }
@@ -1583,18 +1788,29 @@ function addDraftImageFile(file) {
     composerHint.textContent = `单张图片超过 ${Math.floor(imageLimits.maxImageBytes / 1024 / 1024)}MB 上限。`;
     return;
   }
-  const totalBytes = images.reduce((sum, image) => sum + image.bytes, 0) + file.size;
+  const totalBytes = images.reduce((sum, image) => sum + image.bytes, 0) + reservation.bytes + file.size;
   if (totalBytes > imageLimits.maxMessageImageBytes) {
     composerHint.textContent = `图片合计超过 ${Math.floor(imageLimits.maxMessageImageBytes / 1024 / 1024)}MB 上限。`;
     return;
   }
+  reservation.count += 1;
+  reservation.bytes += file.size;
   const reader = new FileReader();
   reader.onload = () => {
+    releaseImageReservation(item.id, file.size);
+    if (!conversations.includes(item) || !conversationSupportsVision(item)) return;
     const dataUrl = String(reader.result || '');
     const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
     if (!base64) return;
-    images.push({ name: file.name || 'image', mimeType: file.type, bytes: file.size, data: base64, dataUrl });
-    renderImageChips();
+    images.push({
+      name: file.name || 'image', mimeType: file.type, bytes: file.size, data: base64,
+      previewUrl: URL.createObjectURL(file),
+    });
+    if (item.id === activeConversationId) renderImageChips();
+  };
+  reader.onerror = reader.onabort = () => {
+    releaseImageReservation(item.id, file.size);
+    if (item.id === activeConversationId) composerHint.textContent = tr('图片读取失败，请重新选择。');
   };
   reader.readAsDataURL(file);
 }
@@ -1628,7 +1844,7 @@ composerModel.addEventListener('change', () => {
     return;
   }
   item.model = model;
-  if (modelInfo(model)?.vision !== true) draftImagesByConversation.set(item.id, []);
+  if (modelInfo(model)?.vision !== true) clearDraftImages(item.id);
   vscode.postMessage({ type: 'setConversationModel', conversationId: item.id, model });
   render();
   persist();
@@ -1652,6 +1868,12 @@ usageClear.addEventListener('click', () => {
 });
 closeSettings.addEventListener('click', closeSettingsDialog);
 settingsOverlay.addEventListener('click', (event) => { if (event.target === settingsOverlay) closeSettingsDialog(); });
+closeImagePreview.addEventListener('click', closeFullImage);
+imagePreviewOverlay.addEventListener('click', (event) => { if (event.target === imagePreviewOverlay) closeFullImage(); });
+conversation.addEventListener('pointerdown', beginConversationInteraction, true);
+window.addEventListener('pointerup', endConversationInteraction, true);
+window.addEventListener('pointercancel', endConversationInteraction, true);
+window.addEventListener('blur', endConversationInteraction);
 openAdvancedSettings.addEventListener('click', () => vscode.postMessage({ type: 'openSettings' }));
 openLogs.addEventListener('click', () => vscode.postMessage({ type: 'openLogs' }));
 copyDiagnostics.addEventListener('click', () => vscode.postMessage({ type: 'copyDiagnostics' }));
@@ -1713,6 +1935,7 @@ document.addEventListener('click', (event) => {
 document.addEventListener('keydown', (event) => {
   if ((event.ctrlKey || event.metaKey) && ['+', '-', '=', '0'].includes(event.key)) event.preventDefault();
   if (event.key === 'Escape') {
+    if (!imagePreviewOverlay.hidden) closeFullImage();
     if (!usagePanel.hidden) {
       setUsagePanelOpen(false);
     }
@@ -1937,6 +2160,7 @@ window.addEventListener('message', ({ data }) => {
         type: 'user',
         text: data.text,
         steering: Boolean(data.steering),
+        ...(typeof data.clientMessageId === 'string' && data.clientMessageId ? { previewId: data.clientMessageId } : {}),
         ...(Array.isArray(data.images) && data.images.length ? {
           images: data.images.slice(0, 16).map((image) => ({
             name: String(image?.name || 'image').slice(0, 120),
@@ -1946,6 +2170,9 @@ window.addEventListener('message', ({ data }) => {
       });
       item.updatedAt = Date.now();
       render();
+      break;
+    case 'discardImagePreview':
+      if (typeof data.clientMessageId === 'string') releaseMessagePreview(data.clientMessageId);
       break;
     case 'conversationModel':
       if (typeof data.model === 'string' && data.model) item.model = data.model;
@@ -2068,6 +2295,7 @@ window.addEventListener('message', ({ data }) => {
       }
       break;
     case 'conversationCleared':
+      releaseEntryPreviews(item.entries);
       item.entries = [];
       item.title = '新对话';
       item.sessionId = data.sessionId;
@@ -2075,7 +2303,7 @@ window.addEventListener('message', ({ data }) => {
       item.activeTurn = false;
       item.cancelState = 'idle';
       item.usage = normalizeUsage();
-      item.usageByTier = { peak: normalizeUsage(), offPeak: normalizeUsage() };
+      item.usageByModelTier = {};
       item.pricingIncomplete = false;
       item.contextUsage = { used: 0, size: 0 };
       item.performance = normalizePerformance();
@@ -2118,7 +2346,11 @@ window.addEventListener('message', ({ data }) => {
   }
 });
 
-window.addEventListener('pagehide', () => persist(true));
+window.addEventListener('pagehide', () => {
+  persist(true);
+  for (const item of conversations) clearDraftImages(item.id);
+  for (const messageId of [...messageImagePreviews.keys()]) releaseMessagePreview(messageId);
+});
 
 render();
 setConnection('connecting', '正在连接');

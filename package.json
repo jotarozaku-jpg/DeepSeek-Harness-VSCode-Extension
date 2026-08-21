@@ -178,7 +178,7 @@
     }
   },
   "scripts": {
-    "check": "node --check extension.js && node --check src/acpTransport.js && node --check src/security.js && node --check media/i18n.js && node --check media/main.js && node --check adapter/acp-bridge.mjs && node --check adapter/runtime-feature-filter.mjs",
+    "check": "node --check extension.js && node --check src/acpTransport.js && node --check src/security.js && node --check media/i18n.js && node --check media/pricing.js && node --check media/main.js && node --check adapter/acp-bridge.mjs && node --check adapter/runtime-feature-filter.mjs",
     "smoke:acp": "node tests/smoke-acp.js",
     "smoke:approval": "node tests/smoke-approval-mode.mjs",
     "smoke:auto-approval": "node tests/smoke-auto-approval.mjs",
@@ -186,7 +186,11 @@
     "smoke:feature-groups": "node tests/smoke-feature-groups.mjs",
     "smoke:git": "node tests/smoke-git.mjs",
     "smoke:i18n": "node tests/smoke-i18n.mjs",
+    "smoke:pricing": "node tests/smoke-pricing.mjs",
     "smoke:resume": "node tests/smoke-resume.js",
+    "smoke:security": "node tests/smoke-security.js",
+    "smoke:steer": "node tests/smoke-steer.js",
+    "smoke:ui-features": "node tests/smoke-ui-features.mjs",
     "smoke:vision": "node tests/smoke-vision.mjs",
     "prepackage": "node scripts/prepare-package.js",
     "package": "npx --yes @vscode/vsce@latest package --out dist/deepseek-harness-vscode.vsix"
