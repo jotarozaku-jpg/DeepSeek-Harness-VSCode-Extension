@@ -1,0 +1,3 @@
+# Patches must stay byte-exact: the Harness source is LF, and a CRLF-converted
+# checkout (core.autocrlf=true) makes git apply fail with "patch does not apply".
+*.patch -text
